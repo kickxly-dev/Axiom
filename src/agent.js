@@ -101,19 +101,19 @@ export async function processMessage(channelId, userMessage, context = {}) {
 
       const tool = getToolByName(name);
       let result;
+      let parsedArgs;
 
       if (!tool) {
         result = `Error: tool "${name}" is not registered.`;
       } else {
-        let args;
         try {
-          args = JSON.parse(argsJson);
+          parsedArgs = JSON.parse(argsJson);
         } catch (err) {
           result = `Error parsing arguments for tool "${name}": ${err.message}`;
         }
-        if (args !== undefined) {
+        if (parsedArgs !== undefined) {
           try {
-            result = await Promise.resolve(tool.execute(args, context));
+            result = await Promise.resolve(tool.execute(parsedArgs, context));
           } catch (err) {
             result = `Error executing tool "${name}": ${err.message}`;
           }
@@ -121,6 +121,11 @@ export async function processMessage(channelId, userMessage, context = {}) {
       }
 
       console.log(`[Agent] Tool result for ${name}: ${result}`);
+
+      // Notify the caller (e.g. desktop UI) about tool activity
+      if (typeof context.onToolLog === "function") {
+        context.onToolLog(name, parsedArgs ?? argsJson, result);
+      }
 
       messages.push({
         role: "tool",

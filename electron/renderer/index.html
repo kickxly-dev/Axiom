@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self';" />
+  <title>Axiom — AI Agent</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+
+    <!-- ── Sidebar ─────────────────────────────────────────────────────── -->
+    <aside class="sidebar">
+
+      <div class="logo">
+        <span class="logo-icon">🧠</span>
+        <span class="logo-text">Axiom</span>
+      </div>
+
+      <!-- Status panel -->
+      <section class="sidebar-section">
+        <h3 class="section-title">Connection Status</h3>
+
+        <div class="status-item">
+          <span class="dot" id="groq-dot"></span>
+          <div class="status-info">
+            <span class="status-label">Groq AI</span>
+            <span class="status-detail" id="groq-detail">Checking…</span>
+          </div>
+        </div>
+
+        <div class="status-item">
+          <span class="dot" id="discord-dot"></span>
+          <div class="status-info">
+            <span class="status-label">Discord Bot</span>
+            <span class="status-detail" id="discord-detail">Not started</span>
+          </div>
+        </div>
+
+        <div class="model-badge-row">
+          <span class="badge" id="model-badge">llama3-8b-8192</span>
+        </div>
+      </section>
+
+      <!-- Controls -->
+      <section class="sidebar-section">
+        <h3 class="section-title">Controls</h3>
+        <button class="btn btn-secondary" id="start-discord-btn">
+          🤖 Start Discord Bot
+        </button>
+        <button class="btn btn-danger" id="clear-btn">
+          🧹 Clear History
+        </button>
+        <button class="btn btn-ghost" id="open-env-btn">
+          ⚙️ Open .env Config
+        </button>
+      </section>
+
+      <!-- Tool activity log -->
+      <section class="sidebar-section tool-log-section">
+        <h3 class="section-title">Tool Activity</h3>
+        <div id="tool-log-list">
+          <p class="empty-hint">No tool calls yet</p>
+        </div>
+      </section>
+
+    </aside>
+
+    <!-- ── Chat area ────────────────────────────────────────────────────── -->
+    <main class="chat-area">
+
+      <header class="chat-header">
+        <h2>Chat with Axiom</h2>
+        <span class="agent-status" id="agent-status-badge">● Initializing…</span>
+      </header>
+
+      <div class="messages" id="messages">
+        <!-- Welcome splash -->
+        <div class="welcome" id="welcome">
+          <div class="welcome-icon">🧠</div>
+          <h2>Welcome to Axiom Desktop</h2>
+          <p>Send me a task or question and I'll use my AI brain to help you!</p>
+          <div class="examples">
+            <button class="example-btn" data-text="What is 15% of 847?">What is 15% of 847?</button>
+            <button class="example-btn" data-text="What time is it in Tokyo?">What time is it in Tokyo?</button>
+            <button class="example-btn" data-text="Define the word &quot;ephemeral&quot;">Define "ephemeral"</button>
+            <button class="example-btn" data-text="Remind me in 2 minutes to take a break">Remind me in 2 minutes to take a break</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Thinking indicator (hidden by default) -->
+      <div class="thinking-bar" id="thinking-bar" hidden>
+        <span class="dot-pulse"></span>
+        <span class="dot-pulse"></span>
+        <span class="dot-pulse"></span>
+        <span class="thinking-label">Axiom is thinking…</span>
+      </div>
+
+      <!-- Input -->
+      <div class="input-area">
+        <div class="input-row">
+          <textarea
+            id="message-input"
+            placeholder="Send a message to Axiom…"
+            rows="1"
+            maxlength="4000"
+          ></textarea>
+          <button class="send-btn" id="send-btn" disabled title="Send (Enter)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </div>
+        <p class="input-hint">
+          <kbd>Enter</kbd> to send &nbsp;·&nbsp; <kbd>Shift+Enter</kbd> for new line
+        </p>
+      </div>
+
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
