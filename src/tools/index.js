@@ -8,7 +8,7 @@
  * A tool object must have:
  *   - name: string
  *   - description: string
- *   - parameters: JSON Schema object (for Gemini function declarations)
+ *   - parameters: JSON Schema object
  *   - execute(params, context?): string | Promise<string>
  */
 
@@ -21,14 +21,17 @@ import { defineTool } from "./define.js";
 export const tools = [calculatorTool, datetimeTool, remindTool, defineTool];
 
 /**
- * Build the Gemini-compatible function declarations array.
- * @returns {Array<{ name: string, description: string, parameters: object }>}
+ * Build the Groq/OpenAI-compatible tool definitions array.
+ * @returns {Array<{ type: "function", function: { name: string, description: string, parameters: object } }>}
  */
-export function getFunctionDeclarations() {
+export function getToolDefinitions() {
   return tools.map((t) => ({
-    name: t.name,
-    description: t.description,
-    parameters: t.parameters,
+    type: "function",
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters,
+    },
   }));
 }
 

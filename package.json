@@ -1,7 +1,7 @@
 {
   "name": "axiom-ai-agent",
   "version": "1.0.0",
-  "description": "Axiom - An AI brain Discord bot powered by Google Gemini (free tier) with an extensible tool system",
+  "description": "Axiom - An AI brain Discord bot powered by Groq (free tier) with an extensible tool system",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
@@ -12,15 +12,15 @@
     "discord",
     "ai",
     "bot",
-    "gemini",
+    "groq",
     "agent"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "discord.js": "^14.16.3",
-    "@google/generative-ai": "^0.21.0",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.4.7",
+    "groq-sdk": "^1.1.2"
   },
   "overrides": {
     "undici": "^6.24.1"

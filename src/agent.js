@@ -2,47 +2,36 @@
  * agent.js
  *
  * Core AI agent loop that:
- *   1. Sends user messages to Google Gemini.
- *   2. Handles function-call responses by executing the matching tool.
- *   3. Feeds tool results back to Gemini until a final text response is produced.
+ *   1. Sends user messages to Groq.
+ *   2. Handles tool-call responses by executing the matching tool.
+ *   3. Feeds tool results back to Groq until a final text response is produced.
  */
 
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import { getFunctionDeclarations, getToolByName } from "./tools/index.js";
+import Groq from "groq-sdk";
+import { getToolDefinitions, getToolByName } from "./tools/index.js";
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GROQ_MODEL = process.env.GROQ_MODEL || "llama3-8b-8192";
 const SYSTEM_PROMPT =
   process.env.SYSTEM_PROMPT ||
   "You are Axiom, a highly intelligent AI assistant and agent. You are helpful, concise, and proactive. When users ask you to do something, you use available tools to fulfill their request. Always explain what you are doing.";
 const MAX_TOOL_ROUNDS = parseInt(process.env.MAX_TOOL_ROUNDS || "5", 10);
 
-if (!GEMINI_API_KEY) {
-  throw new Error("GEMINI_API_KEY is not set. Please check your .env file.");
+if (!GROQ_API_KEY) {
+  throw new Error("GROQ_API_KEY is not set. Please check your .env file.");
 }
 
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-
-/**
- * Build a Gemini model instance with function declarations wired up.
- */
-function buildModel() {
-  return genAI.getGenerativeModel({
-    model: GEMINI_MODEL,
-    systemInstruction: SYSTEM_PROMPT,
-    tools: [{ functionDeclarations: getFunctionDeclarations() }],
-  });
-}
+const groq = new Groq({ apiKey: GROQ_API_KEY });
 
 /**
  * Per-channel conversation history.
- * Key: channelId (string), Value: Gemini chat history array
+ * Key: channelId (string), Value: array of OpenAI-style message objects
  * @type {Map<string, Array<object>>}
  */
 const channelHistories = new Map();
 
 /**
- * Process a user message through the Gemini agent loop.
+ * Process a user message through the Groq agent loop.
  *
  * @param {string} channelId   - Unique identifier for the conversation channel.
  * @param {string} userMessage - The text the user sent.
@@ -50,39 +39,49 @@ const channelHistories = new Map();
  * @returns {Promise<string>}  - The final text response to send back to the user.
  */
 export async function processMessage(channelId, userMessage, context = {}) {
-  const model = buildModel();
-
   // Retrieve or create per-channel history
   if (!channelHistories.has(channelId)) {
     channelHistories.set(channelId, []);
   }
   const history = channelHistories.get(channelId);
 
-  const chat = model.startChat({ history });
+  // Append the new user message to history
+  history.push({ role: "user", content: userMessage });
 
-  let response = await chat.sendMessage(userMessage);
+  const messages = [
+    { role: "system", content: SYSTEM_PROMPT },
+    ...history,
+  ];
 
-  // Tool-call loop
+  // Tool-call loop — up to MAX_TOOL_ROUNDS rounds of tool execution
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const candidate = response.response.candidates?.[0];
-    if (!candidate) break;
+    const response = await groq.chat.completions.create({
+      model: GROQ_MODEL,
+      messages,
+      tools: getToolDefinitions(),
+      tool_choice: "auto",
+    });
 
-    // Collect any function calls from this response
-    const functionCalls = candidate.content?.parts?.filter(
-      (p) => p.functionCall
-    );
+    const choice = response.choices[0];
+    const assistantMessage = choice.message;
 
-    if (!functionCalls || functionCalls.length === 0) {
-      // No more tool calls — we have our final answer
-      break;
+    // Append assistant's response to the running messages list
+    messages.push(assistantMessage);
+
+    // If no tool calls, we have the final answer
+    if (
+      !assistantMessage.tool_calls ||
+      assistantMessage.tool_calls.length === 0
+    ) {
+      // Persist the updated history (excluding the system prompt)
+      channelHistories.set(channelId, messages.slice(1));
+      return assistantMessage.content || "_(No response generated)_";
     }
 
-    // Execute all requested tools and build function response parts
-    const functionResponseParts = [];
-
-    for (const part of functionCalls) {
-      const { name, args } = part.functionCall;
-      console.log(`[Agent] Tool call: ${name}(${JSON.stringify(args)})`);
+    // Execute each tool call and append results
+    for (const toolCall of assistantMessage.tool_calls) {
+      const { name, arguments: argsJson } = toolCall.function;
+      console.log(`[Agent] Tool call: ${name}(${argsJson})`);
 
       const tool = getToolByName(name);
       let result;
@@ -90,33 +89,34 @@ export async function processMessage(channelId, userMessage, context = {}) {
       if (!tool) {
         result = `Error: tool "${name}" is not registered.`;
       } else {
+        let args;
         try {
-          result = await Promise.resolve(tool.execute(args, context));
+          args = JSON.parse(argsJson);
         } catch (err) {
-          result = `Error executing tool "${name}": ${err.message}`;
+          result = `Error parsing arguments for tool "${name}": ${err.message}`;
+        }
+        if (args !== undefined) {
+          try {
+            result = await Promise.resolve(tool.execute(args, context));
+          } catch (err) {
+            result = `Error executing tool "${name}": ${err.message}`;
+          }
         }
       }
 
       console.log(`[Agent] Tool result for ${name}: ${result}`);
 
-      functionResponseParts.push({
-        functionResponse: {
-          name,
-          response: { output: result },
-        },
+      messages.push({
+        role: "tool",
+        tool_call_id: toolCall.id,
+        content: String(result),
       });
     }
-
-    // Send tool results back to the model
-    response = await chat.sendMessage(functionResponseParts);
   }
 
-  // Persist updated history for this channel
-  channelHistories.set(channelId, await chat.getHistory());
-
-  // Extract and return the final text
-  const text = response.response.text();
-  return text || "_(No response generated)_";
+  // Fallback: max tool rounds exhausted without a final text response
+  channelHistories.set(channelId, messages.slice(1));
+  return "_(Max tool rounds reached without a final response)_";
 }
 
 /**
