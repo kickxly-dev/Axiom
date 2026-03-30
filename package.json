@@ -1,26 +1,27 @@
 {
   "name": "axiom-ai-agent",
   "version": "1.0.0",
-  "description": "Axiom - An AI brain Discord bot powered by Groq (free tier) with an extensible tool system",
+  "description": "Axiom - An AI brain Discord bot and desktop app powered by a local Ollama server (phi3:mini) with an extensible tool system",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "desktop": "MODE=desktop node src/index.js"
   },
   "keywords": [
     "discord",
     "ai",
     "bot",
-    "groq",
+    "ollama",
+    "phi3",
     "agent"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "discord.js": "^14.16.3",
-    "dotenv": "^16.4.7",
-    "groq-sdk": "^1.1.2"
+    "dotenv": "^16.4.7"
   },
   "overrides": {
     "undici": "^6.24.1"
