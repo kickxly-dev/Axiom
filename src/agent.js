@@ -2,39 +2,74 @@
  * agent.js
  *
  * Core AI agent loop that:
- *   1. Sends user messages to Groq.
+ *   1. Sends user messages to a local Ollama server.
  *   2. Handles tool-call responses by executing the matching tool.
- *   3. Feeds tool results back to Groq until a final text response is produced.
+ *   3. Feeds tool results back to Ollama until a final text response is produced.
  */
 
-import Groq from "groq-sdk";
 import { getToolDefinitions, getToolByName } from "./tools/index.js";
 
-/** @type {Groq | null} */
-let groq = null;
-let groqModel = null;
+let ollamaEndpoint = null;
+let ollamaModel = null;
 let systemPrompt = null;
 let maxToolRounds = null;
 
 /**
- * Lazily initialise (and cache) the Groq client so that `process.env` is
- * read after dotenv has had a chance to populate it, not at module-load time.
- * @returns {Groq}
+ * Read Ollama config from environment (lazily, so dotenv is loaded first).
  */
-function getGroqClient() {
-  if (!groq) {
-    const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) {
-      throw new Error("GROQ_API_KEY is not set. Please check your .env file.");
-    }
-    groq = new Groq({ apiKey });
-    groqModel = process.env.GROQ_MODEL || "llama3-8b-8192";
+function initConfig() {
+  if (ollamaEndpoint === null) {
+    ollamaEndpoint =
+      (process.env.OLLAMA_ENDPOINT || "http://localhost:11434").replace(/\/$/, "");
+    ollamaModel = process.env.OLLAMA_MODEL || "phi3:mini";
     systemPrompt =
       process.env.SYSTEM_PROMPT ||
       "You are Axiom, a highly intelligent AI assistant and agent. You are helpful, concise, and proactive. When users ask you to do something, you use available tools to fulfill their request. Always explain what you are doing.";
     maxToolRounds = parseInt(process.env.MAX_TOOL_ROUNDS || "5", 10);
   }
-  return groq;
+}
+
+/**
+ * Send a single chat request to Ollama and return the response message object.
+ * @param {Array<object>} messages
+ * @param {Array<object>} tools
+ * @returns {Promise<object>} Ollama message object { role, content, tool_calls? }
+ */
+async function ollamaChat(messages, tools) {
+  const url = `${ollamaEndpoint}/api/chat`;
+  const body = {
+    model: ollamaModel,
+    messages,
+    tools,
+    stream: false,
+  };
+
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    throw new Error(
+      `Cannot reach Ollama at ${ollamaEndpoint}. Make sure Ollama is running. (${err.message})`
+    );
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    let hint = "";
+    if (res.status === 404) {
+      hint = ` (Model "${ollamaModel}" may not be pulled — run: ollama pull ${ollamaModel})`;
+    } else if (res.status === 500) {
+      hint = " (Ollama internal error — check the Ollama server logs)";
+    }
+    throw new Error(`Ollama returned HTTP ${res.status}${hint}: ${text}`);
+  }
+
+  const data = await res.json();
+  return data.message; // { role: "assistant", content: "...", tool_calls?: [...] }
 }
 
 /**
@@ -45,7 +80,7 @@ function getGroqClient() {
 const channelHistories = new Map();
 
 /**
- * Process a user message through the Groq agent loop.
+ * Process a user message through the Ollama agent loop.
  *
  * @param {string} channelId   - Unique identifier for the conversation channel.
  * @param {string} userMessage - The text the user sent.
@@ -53,7 +88,7 @@ const channelHistories = new Map();
  * @returns {Promise<string>}  - The final text response to send back to the user.
  */
 export async function processMessage(channelId, userMessage, context = {}) {
-  const client = getGroqClient();
+  initConfig();
 
   // Retrieve or create per-channel history
   if (!channelHistories.has(channelId)) {
@@ -69,17 +104,11 @@ export async function processMessage(channelId, userMessage, context = {}) {
     ...history,
   ];
 
+  const toolDefs = getToolDefinitions();
+
   // Tool-call loop — up to MAX_TOOL_ROUNDS rounds of tool execution
   for (let round = 0; round < maxToolRounds; round++) {
-    const response = await client.chat.completions.create({
-      model: groqModel,
-      messages,
-      tools: getToolDefinitions(),
-      tool_choice: "auto",
-    });
-
-    const choice = response.choices[0];
-    const assistantMessage = choice.message;
+    const assistantMessage = await ollamaChat(messages, toolDefs);
 
     // Append assistant's response to the running messages list
     messages.push(assistantMessage);
@@ -95,9 +124,12 @@ export async function processMessage(channelId, userMessage, context = {}) {
     }
 
     // Execute each tool call and append results
+    // Ollama returns tool_calls as: [{ function: { name, arguments: <object> } }]
     for (const toolCall of assistantMessage.tool_calls) {
-      const { name, arguments: argsJson } = toolCall.function;
-      console.log(`[Agent] Tool call: ${name}(${argsJson})`);
+      const { name, arguments: args } = toolCall.function;
+      const argsDisplay =
+        typeof args === "string" ? args : JSON.stringify(args);
+      console.log(`[Agent] Tool call: ${name}(${argsDisplay})`);
 
       const tool = getToolByName(name);
       let result;
@@ -105,15 +137,21 @@ export async function processMessage(channelId, userMessage, context = {}) {
       if (!tool) {
         result = `Error: tool "${name}" is not registered.`;
       } else {
-        let args;
-        try {
-          args = JSON.parse(argsJson);
-        } catch (err) {
-          result = `Error parsing arguments for tool "${name}": ${err.message}`;
-        }
-        if (args !== undefined) {
+        // Ollama may pass arguments as an already-parsed object or as a JSON string
+        let parsedArgs;
+        if (typeof args === "string") {
           try {
-            result = await Promise.resolve(tool.execute(args, context));
+            parsedArgs = JSON.parse(args);
+          } catch (err) {
+            result = `Error parsing arguments for tool "${name}": ${err.message}`;
+          }
+        } else {
+          parsedArgs = args;
+        }
+
+        if (parsedArgs !== undefined) {
+          try {
+            result = await Promise.resolve(tool.execute(parsedArgs, context));
           } catch (err) {
             result = `Error executing tool "${name}": ${err.message}`;
           }
@@ -122,9 +160,9 @@ export async function processMessage(channelId, userMessage, context = {}) {
 
       console.log(`[Agent] Tool result for ${name}: ${result}`);
 
+      // Ollama expects tool results in the "tool" role (no tool_call_id needed)
       messages.push({
         role: "tool",
-        tool_call_id: toolCall.id,
         content: String(result),
       });
     }

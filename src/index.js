@@ -1,15 +1,24 @@
 /**
  * index.js — Entry point for Axiom AI Brain
  *
- * Loads environment variables, then starts the Discord bot.
+ * Loads environment variables, then starts in the selected mode:
+ *   - MODE=discord (default) — starts the Discord bot
+ *   - MODE=desktop           — starts the interactive terminal (REPL) interface
  */
 
 import "dotenv/config";
-import { startBot } from "./bot.js";
 
-console.log("🚀 Starting Axiom AI Brain...");
+const mode = (process.env.MODE || "discord").toLowerCase();
 
-startBot().catch((err) => {
-  console.error("Fatal error starting bot:", err);
-  process.exit(1);
-});
+if (mode === "desktop") {
+  console.log("🚀 Starting Axiom AI Brain (Desktop Mode)...");
+  const { startDesktop } = await import("./desktop.js");
+  startDesktop();
+} else {
+  console.log("🚀 Starting Axiom AI Brain (Discord Mode)...");
+  const { startBot } = await import("./bot.js");
+  startBot().catch((err) => {
+    console.error("Fatal error starting bot:", err);
+    process.exit(1);
+  });
+}
