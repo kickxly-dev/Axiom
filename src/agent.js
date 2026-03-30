@@ -10,18 +10,32 @@
 import Groq from "groq-sdk";
 import { getToolDefinitions, getToolByName } from "./tools/index.js";
 
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const GROQ_MODEL = process.env.GROQ_MODEL || "llama3-8b-8192";
-const SYSTEM_PROMPT =
-  process.env.SYSTEM_PROMPT ||
-  "You are Axiom, a highly intelligent AI assistant and agent. You are helpful, concise, and proactive. When users ask you to do something, you use available tools to fulfill their request. Always explain what you are doing.";
-const MAX_TOOL_ROUNDS = parseInt(process.env.MAX_TOOL_ROUNDS || "5", 10);
+/** @type {Groq | null} */
+let groq = null;
+let groqModel = null;
+let systemPrompt = null;
+let maxToolRounds = null;
 
-if (!GROQ_API_KEY) {
-  throw new Error("GROQ_API_KEY is not set. Please check your .env file.");
+/**
+ * Lazily initialise (and cache) the Groq client so that `process.env` is
+ * read after dotenv has had a chance to populate it, not at module-load time.
+ * @returns {Groq}
+ */
+function getGroqClient() {
+  if (!groq) {
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) {
+      throw new Error("GROQ_API_KEY is not set. Please check your .env file.");
+    }
+    groq = new Groq({ apiKey });
+    groqModel = process.env.GROQ_MODEL || "llama3-8b-8192";
+    systemPrompt =
+      process.env.SYSTEM_PROMPT ||
+      "You are Axiom, a highly intelligent AI assistant and agent. You are helpful, concise, and proactive. When users ask you to do something, you use available tools to fulfill their request. Always explain what you are doing.";
+    maxToolRounds = parseInt(process.env.MAX_TOOL_ROUNDS || "5", 10);
+  }
+  return groq;
 }
-
-const groq = new Groq({ apiKey: GROQ_API_KEY });
 
 /**
  * Per-channel conversation history.
@@ -39,6 +53,8 @@ const channelHistories = new Map();
  * @returns {Promise<string>}  - The final text response to send back to the user.
  */
 export async function processMessage(channelId, userMessage, context = {}) {
+  const client = getGroqClient();
+
   // Retrieve or create per-channel history
   if (!channelHistories.has(channelId)) {
     channelHistories.set(channelId, []);
@@ -49,14 +65,14 @@ export async function processMessage(channelId, userMessage, context = {}) {
   history.push({ role: "user", content: userMessage });
 
   const messages = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: systemPrompt },
     ...history,
   ];
 
   // Tool-call loop — up to MAX_TOOL_ROUNDS rounds of tool execution
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const response = await groq.chat.completions.create({
-      model: GROQ_MODEL,
+  for (let round = 0; round < maxToolRounds; round++) {
+    const response = await client.chat.completions.create({
+      model: groqModel,
       messages,
       tools: getToolDefinitions(),
       tool_choice: "auto",

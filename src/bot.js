@@ -14,12 +14,6 @@ import {
 } from "discord.js";
 import { processMessage, clearHistory } from "./agent.js";
 
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-
-if (!DISCORD_TOKEN) {
-  throw new Error("DISCORD_TOKEN is not set. Please check your .env file.");
-}
-
 // Discord client with the intents we need
 export const client = new Client({
   intents: [
@@ -143,5 +137,9 @@ function splitMessage(text, maxLength) {
  * Start the bot.
  */
 export function startBot() {
-  return client.login(DISCORD_TOKEN);
+  const token = process.env.DISCORD_TOKEN;
+  if (!token) {
+    throw new Error("DISCORD_TOKEN is not set. Please check your .env file.");
+  }
+  return client.login(token);
 }
