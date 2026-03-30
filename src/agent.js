@@ -15,6 +15,13 @@ let systemPrompt = null;
 let maxToolRounds = null;
 
 /**
+ * Tracks whether the current model has been confirmed to not support tools.
+ * Set to true on a "does not support tools" 400 response; resets when model changes.
+ */
+let modelToolsUnsupported = false;
+let lastKnownModel = null;
+
+/**
  * Read Ollama config from environment (lazily, so dotenv is loaded first).
  */
 function initConfig() {
@@ -27,6 +34,12 @@ function initConfig() {
       "You are Axiom, a highly intelligent AI assistant and agent. You are helpful, concise, and proactive. When users ask you to do something, you use available tools to fulfill their request. Always explain what you are doing.";
     maxToolRounds = parseInt(process.env.MAX_TOOL_ROUNDS || "5", 10);
   }
+
+  // Reset tool-support tracking whenever the configured model changes.
+  if (ollamaModel !== lastKnownModel) {
+    lastKnownModel = ollamaModel;
+    modelToolsUnsupported = false;
+  }
 }
 
 /**
@@ -37,10 +50,12 @@ function initConfig() {
  */
 async function ollamaChat(messages, tools) {
   const url = `${ollamaEndpoint}/api/chat`;
+
+  // If the model was already determined not to support tools, skip the tools field.
   const body = {
     model: ollamaModel,
     messages,
-    tools,
+    ...(modelToolsUnsupported ? {} : { tools }),
     stream: false,
   };
 
@@ -59,9 +74,31 @@ async function ollamaChat(messages, tools) {
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
+
+    // Gracefully handle models that don't support the tools API:
+    // remember this for the session and retry without tools.
+    const isToolsUnsupported = (() => {
+      if (res.status !== 400) return false;
+      try {
+        const json = JSON.parse(text);
+        return typeof json.error === "string" && json.error.includes("does not support tools");
+      } catch {
+        return text.includes("does not support tools");
+      }
+    })();
+    if (isToolsUnsupported) {
+      console.warn(
+        `[Agent] Model "${ollamaModel}" does not support tools — falling back to plain chat.`
+      );
+      modelToolsUnsupported = true;
+      return ollamaChat(messages, []);
+    }
+
     let hint = "";
     if (res.status === 404) {
       hint = ` (Model "${ollamaModel}" may not be pulled — run: ollama pull ${ollamaModel})`;
+    } else if (res.status === 400) {
+      hint = ` (Bad request — check that the model name "${ollamaModel}" is correct)`;
     } else if (res.status === 500) {
       hint = " (Ollama internal error — check the Ollama server logs)";
     }
