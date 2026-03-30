@@ -16,9 +16,18 @@ import { calculatorTool } from "./calculator.js";
 import { datetimeTool } from "./datetime.js";
 import { remindTool } from "./remind.js";
 import { defineTool } from "./define.js";
+import { webSearchTool } from "./webSearch.js";
+import { weatherTool } from "./weather.js";
 
 /** @type {Array<import("./types.js").Tool>} */
-export const tools = [calculatorTool, datetimeTool, remindTool, defineTool];
+export const tools = [
+  calculatorTool,
+  datetimeTool,
+  remindTool,
+  defineTool,
+  webSearchTool,
+  weatherTool,
+];
 
 /**
  * Build the Groq/OpenAI-compatible tool definitions array.

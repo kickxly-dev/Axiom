@@ -28,7 +28,7 @@ function getGroqClient() {
       throw new Error("GROQ_API_KEY is not set. Please check your .env file.");
     }
     groq = new Groq({ apiKey });
-    groqModel = process.env.GROQ_MODEL || "llama3-8b-8192";
+    groqModel = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
     systemPrompt =
       process.env.SYSTEM_PROMPT ||
       "You are Axiom, a highly intelligent AI assistant and agent. You are helpful, concise, and proactive. When users ask you to do something, you use available tools to fulfill their request. Always explain what you are doing.";

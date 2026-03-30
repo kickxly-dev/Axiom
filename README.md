@@ -13,6 +13,8 @@
 | 🔧 Tool / Agent Loop | Groq calls tools automatically to complete tasks |
 | 🔢 Calculator | Evaluate any math expression |
 | 🕐 Date & Time | Get the current date/time in any timezone |
+| 🌤️ Weather | Live weather for any city (no API key needed) |
+| 🔍 Web Search | Search the web via DuckDuckGo (no API key needed) |
 | ⏰ Reminders | "Remind me in 10 minutes to drink water" |
 | 📖 Word Definitions | Look up any English word |
 | ➕ Extensible | Add your own tools in minutes (see below) |
@@ -121,6 +123,8 @@ Your bot is now live! Head to Discord and try it out.
 ```
 @Axiom what is 15% of 847?
 @Axiom what time is it in Tokyo?
+@Axiom what's the weather in London?
+@Axiom search for the latest news about AI
 @Axiom remind me in 5 minutes to take a break
 @Axiom define the word "ephemeral"
 @Axiom explain how black holes work
@@ -171,7 +175,7 @@ That's it! Groq will automatically discover and use the new tool based on the `d
 | `DISCORD_TOKEN` | ✅ | — | Your Discord bot token |
 | `DISCORD_CLIENT_ID` | ❌ | — | Your Discord application ID (needed to register slash commands in the future) |
 | `GROQ_API_KEY` | ✅ | — | Groq API key (free) |
-| `GROQ_MODEL` | ❌ | `llama3-8b-8192` | Groq model to use (e.g. `mixtral-8x7b-32768`, `llama3-70b-8192`) |
+| `GROQ_MODEL` | ❌ | `llama-3.3-70b-versatile` | Groq model to use (e.g. `llama-3.1-8b-instant` for faster responses) |
 | `SYSTEM_PROMPT` | ❌ | _built-in_ | AI personality / system instruction |
 | `MAX_TOOL_ROUNDS` | ❌ | `5` | Max tool-call iterations per message |
 
@@ -189,6 +193,8 @@ Axiom/
 │       ├── index.js      ← Tool registry
 │       ├── calculator.js ← Math evaluator
 │       ├── datetime.js   ← Date/time lookup
+│       ├── webSearch.js  ← DuckDuckGo web search
+│       ├── weather.js    ← Live weather (Open-Meteo)
 │       ├── remind.js     ← Reminder timer
 │       └── define.js     ← Dictionary lookup
 ├── .env.example          ← Template for your .env file
