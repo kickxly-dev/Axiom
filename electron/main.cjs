@@ -23,6 +23,7 @@ let mainWindow = null;
 // Lazily loaded from the ESM src/agent.js module
 let processMessageFn = null;
 let clearHistoryFn = null;
+let getModelInfoFn = null;
 
 let discordBotRunning = false;
 
@@ -36,6 +37,7 @@ async function loadAgent() {
     const agent = await import('../src/agent.js');
     processMessageFn = agent.processMessage;
     clearHistoryFn   = agent.clearHistory;
+    getModelInfoFn   = agent.getModelInfo;
     console.log('[Desktop] Groq agent loaded.');
   } catch (err) {
     console.error('[Desktop] Failed to load agent module:', err.message);
@@ -74,9 +76,12 @@ function createWindow() {
 // ─── Status helper ────────────────────────────────────────────────────────────
 
 function buildStatus() {
+  const modelInfo = getModelInfoFn ? getModelInfoFn() : null;
   return {
     groq:           !!process.env.GROQ_API_KEY,
-    groqModel:      process.env.GROQ_MODEL || 'llama3-8b-8192',
+    groqModel:      modelInfo ? modelInfo.model : (process.env.GROQ_MODEL || 'llama3-8b-8192'),
+    groqProvider:   modelInfo ? modelInfo.provider : 'Groq',
+    groqProviderUrl: modelInfo ? modelInfo.providerUrl : 'https://console.groq.com',
     discord:        !!process.env.DISCORD_TOKEN,
     discordRunning: discordBotRunning,
     agentReady:     !!processMessageFn,

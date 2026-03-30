@@ -12,7 +12,7 @@ import {
   ActivityType,
   MessageFlags,
 } from "discord.js";
-import { processMessage, clearHistory } from "./agent.js";
+import { processMessage, clearHistory, getModelInfo } from "./agent.js";
 
 // Discord client with the intents we need
 export const client = new Client({
@@ -66,9 +66,23 @@ client.on("messageCreate", async (message) => {
     return message.reply("🧹 Conversation history cleared!");
   }
 
-  if (!userInput) {
+  // Handle "axiom model" / "axiom info" — show AI provider + model
+  if (["model", "info", "ai"].includes(userInput.toLowerCase())) {
+    const info = getModelInfo();
     return message.reply(
-      "Hey! I'm **Axiom**, your AI brain 🧠. Ask me anything or give me a task!"
+      `🤖 **AI Provider:** ${info.provider} (free tier — no credit card required)\n` +
+      `🧠 **Model:** \`${info.model}\`\n` +
+      `🔗 **Provider dashboard:** ${info.providerUrl}/keys\n` +
+      `💡 Change the model by setting \`GROQ_MODEL\` in your \`.env\` file.`
+    );
+  }
+
+  if (!userInput) {
+    const info = getModelInfo();
+    return message.reply(
+      `Hey! I'm **Axiom**, your AI brain 🧠\n` +
+      `I'm powered by **${info.provider}** running \`${info.model}\`.\n` +
+      `Ask me anything, give me a task, or try \`axiom model\` to see AI details!`
     );
   }
 

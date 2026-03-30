@@ -148,9 +148,11 @@ function applyStatus(status) {
     discordDetail.textContent = 'Token not set';
   }
 
-  // Model badge
+  // Model badge — show "Provider · model"
   if (status.groqModel) {
-    modelBadge.textContent = status.groqModel;
+    const provider = status.groqProvider || 'Groq';
+    modelBadge.textContent = `${provider} · ${status.groqModel}`;
+    modelBadge.title = status.groqProviderUrl || 'https://console.groq.com';
   }
 
   // Agent-ready badge in header

@@ -147,3 +147,16 @@ export async function processMessage(channelId, userMessage, context = {}) {
 export function clearHistory(channelId) {
   channelHistories.delete(channelId);
 }
+
+/**
+ * Return information about the current AI provider and model.
+ * Safe to call before the client is initialised — falls back to env vars / defaults.
+ * @returns {{ provider: string, model: string, providerUrl: string }}
+ */
+export function getModelInfo() {
+  return {
+    provider: "Groq",
+    model: groqModel || process.env.GROQ_MODEL || "llama3-8b-8192",
+    providerUrl: "https://console.groq.com",
+  };
+}

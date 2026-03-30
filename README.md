@@ -126,6 +126,7 @@ Your bot is now live! Head to Discord and try it out.
 @Axiom remind me in 5 minutes to take a break
 @Axiom define the word "ephemeral"
 @Axiom explain how black holes work
+axiom model          ← shows which AI provider and model is being used
 axiom clear          ← clears conversation history for this channel
 ```
 
