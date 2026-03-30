@@ -1,6 +1,6 @@
 # Axiom 🧠
 
-**Axiom** is an AI brain Discord bot — message it from Discord, and it will think, reason, and act using a suite of built-in tools. It is powered by **Google Gemini** (free tier, no credit card needed) and is built with **Node.js + discord.js**.
+**Axiom** is an AI brain Discord bot — message it from Discord, and it will think, reason, and act using a suite of built-in tools. It is powered by **Groq** (free tier, no credit card needed) and is built with **Node.js + discord.js**.
 
 ---
 
@@ -10,7 +10,7 @@
 |---|---|
 | 💬 Discord Integration | Mention `@Axiom` in a server, or DM it directly |
 | 🧠 AI Conversations | Full multi-turn conversation memory per channel |
-| 🔧 Tool / Agent Loop | Gemini calls tools automatically to complete tasks |
+| 🔧 Tool / Agent Loop | Groq calls tools automatically to complete tasks |
 | 🔢 Calculator | Evaluate any math expression |
 | 🕐 Date & Time | Get the current date/time in any timezone |
 | ⏰ Reminders | "Remind me in 10 minutes to drink water" |
@@ -23,7 +23,7 @@
 
 - [Node.js](https://nodejs.org/) v18 or newer  
 - A **Discord account** and a Discord server where you have permission to add bots  
-- A **Google Gemini API key** (free — no credit card required)
+- A **Groq API key** (free — no credit card required)
 
 ---
 
@@ -42,14 +42,14 @@ cd Axiom
 npm install
 ```
 
-### Step 3 — Get your FREE Google Gemini API key
+### Step 3 — Get your FREE Groq API key
 
-1. Go to [https://aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
-2. Sign in with your Google account (no credit card required)
+1. Go to [https://console.groq.com/keys](https://console.groq.com/keys)
+2. Sign up or sign in (no credit card required)
 3. Click **"Create API Key"**
 4. Copy the key — you will need it in Step 5
 
-> **Rate limits:** The free tier allows ~1,500 requests/day with `gemini-1.5-flash`. More than enough for personal use.
+> **Rate limits:** The free tier is very generous for personal use. See [Groq's rate limit docs](https://console.groq.com/docs/rate-limits) for details.
 
 ### Step 4 — Create a Discord Bot
 
@@ -86,7 +86,7 @@ Open `.env` in a text editor and set the following:
 ```env
 DISCORD_TOKEN=your_discord_bot_token_here
 DISCORD_CLIENT_ID=your_discord_application_id_here
-GEMINI_API_KEY=your_gemini_api_key_here
+GROQ_API_KEY=your_groq_api_key_here
 ```
 
 > **Where is the Client ID?**  
@@ -138,7 +138,7 @@ Tools live in `src/tools/`. Adding a new one takes ~10 lines:
 ```js
 export const myTool = {
   name: "my_tool",
-  description: "What this tool does — Gemini reads this to decide when to call it.",
+  description: "What this tool does — Groq reads this to decide when to call it.",
   parameters: {
     type: "object",
     properties: {
@@ -160,7 +160,7 @@ import { myTool } from "./myTool.js";
 export const tools = [calculatorTool, datetimeTool, remindTool, defineTool, myTool];
 ```
 
-That's it! Gemini will automatically discover and use the new tool based on the `description`.
+That's it! Groq will automatically discover and use the new tool based on the `description`.
 
 ---
 
@@ -170,8 +170,8 @@ That's it! Gemini will automatically discover and use the new tool based on the 
 |---|---|---|---|
 | `DISCORD_TOKEN` | ✅ | — | Your Discord bot token |
 | `DISCORD_CLIENT_ID` | ❌ | — | Your Discord application ID (needed to register slash commands in the future) |
-| `GEMINI_API_KEY` | ✅ | — | Google Gemini API key (free) |
-| `GEMINI_MODEL` | ❌ | `gemini-1.5-flash` | Gemini model to use |
+| `GROQ_API_KEY` | ✅ | — | Groq API key (free) |
+| `GROQ_MODEL` | ❌ | `llama3-8b-8192` | Groq model to use (e.g. `mixtral-8x7b-32768`, `llama3-70b-8192`) |
 | `SYSTEM_PROMPT` | ❌ | _built-in_ | AI personality / system instruction |
 | `MAX_TOOL_ROUNDS` | ❌ | `5` | Max tool-call iterations per message |
 
@@ -184,7 +184,7 @@ Axiom/
 ├── src/
 │   ├── index.js          ← Entry point
 │   ├── bot.js            ← Discord bot (message handling)
-│   ├── agent.js          ← Gemini AI agent loop
+│   ├── agent.js          ← Groq AI agent loop
 │   └── tools/
 │       ├── index.js      ← Tool registry
 │       ├── calculator.js ← Math evaluator
