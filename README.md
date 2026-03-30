@@ -250,7 +250,43 @@ That's it! Ollama will automatically discover and use the new tool based on the 
 | `DISCORD_TOKEN` | ✅ (discord) | — | Your Discord bot token |
 | `DISCORD_CLIENT_ID` | ❌ | — | Discord application ID (for slash commands) |
 | `SYSTEM_PROMPT` | ❌ | _built-in_ | AI personality / system instruction |
+| `RESPONSE_VERBOSITY` | ❌ | `concise` | Reply length: `concise` or `detailed` |
 | `MAX_TOOL_ROUNDS` | ❌ | `5` | Max tool-call iterations per message |
+
+---
+
+## 🎙️ Personality & Verbosity
+
+### Verbosity mode
+
+Axiom's response length is controlled by the `RESPONSE_VERBOSITY` environment variable. Set it in your `.env` file:
+
+```env
+# Short, natural replies (default) — like a smart friend texting back
+RESPONSE_VERBOSITY=concise
+
+# Thorough explanations with steps and context when needed
+RESPONSE_VERBOSITY=detailed
+```
+
+| Mode | Behaviour |
+|---|---|
+| `concise` | One or two sentences where possible; skips filler words and over-explanation |
+| `detailed` | Full answers with bullet points and background context when the topic warrants it |
+
+### Custom personality
+
+Override the base system prompt entirely via `SYSTEM_PROMPT` to give Axiom a different name, role, or tone:
+
+```env
+# Chill, casual assistant
+SYSTEM_PROMPT=You are Axiom, a chill and witty assistant. Keep it real.
+
+# Formal, professional assistant
+SYSTEM_PROMPT=You are Axiom, a professional AI assistant. Be precise and formal at all times.
+```
+
+> **Tip:** `RESPONSE_VERBOSITY` stacks on top of your custom `SYSTEM_PROMPT`, so you can combine them freely.
 
 ---
 

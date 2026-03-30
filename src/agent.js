@@ -13,6 +13,7 @@ let ollamaEndpoint = null;
 let ollamaModel = null;
 let systemPrompt = null;
 let maxToolRounds = null;
+let verbosity = null;
 
 /**
  * Tracks whether the current model has been confirmed to not support tools.
@@ -24,14 +25,36 @@ let lastKnownModel = null;
 /**
  * Read Ollama config from environment (lazily, so dotenv is loaded first).
  */
+const VERBOSITY_INSTRUCTIONS = {
+  concise:
+    "Keep your replies short and to the point — like a smart, helpful friend texting back. " +
+    "Skip unnecessary intros, filler words, and over-explanations. " +
+    "One or two sentences is usually enough. Only go longer when the topic genuinely requires it.",
+  detailed:
+    "Give thorough, well-structured answers. " +
+    "Use bullet points or numbered steps when breaking down complex topics. " +
+    "Feel free to include context and background when it helps the user understand.",
+};
+
+const DEFAULT_SYSTEM_PROMPT =
+  "You are Axiom, a sharp and friendly AI assistant. " +
+  "You're straightforward, helpful, and sound like a real person — not a textbook. " +
+  "Use tools whenever they help you get the job done.";
+
 function initConfig() {
   if (ollamaEndpoint === null) {
     ollamaEndpoint =
       (process.env.OLLAMA_ENDPOINT || "http://localhost:11434").replace(/\/$/, "");
     ollamaModel = process.env.OLLAMA_MODEL || "phi3:mini";
-    systemPrompt =
-      process.env.SYSTEM_PROMPT ||
-      "You are Axiom, a highly intelligent AI assistant and agent. You are helpful, concise, and proactive. When users ask you to do something, you use available tools to fulfill their request. Always explain what you are doing.";
+    verbosity = (process.env.RESPONSE_VERBOSITY || "concise").toLowerCase();
+    if (!VERBOSITY_INSTRUCTIONS[verbosity]) {
+      console.warn(
+        `[Agent] Unknown RESPONSE_VERBOSITY "${verbosity}" — falling back to "concise".`
+      );
+      verbosity = "concise";
+    }
+    const basePrompt = process.env.SYSTEM_PROMPT || DEFAULT_SYSTEM_PROMPT;
+    systemPrompt = `${basePrompt}\n\nTone & length: ${VERBOSITY_INSTRUCTIONS[verbosity]}`;
     maxToolRounds = parseInt(process.env.MAX_TOOL_ROUNDS || "5", 10);
   }
 
