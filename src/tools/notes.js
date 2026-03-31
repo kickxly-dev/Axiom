@@ -5,13 +5,33 @@
  * save intermediate results, track progress on multi-step tasks,
  * and retrieve information across tool rounds within a session.
  *
- * Notes survive as long as the process runs (they are NOT persisted
- * to disk).  The agent should use this for working memory: jot down
- * a partial result, then look it up in a later round.
+ * Notes are scoped per channel/session so that concurrent conversations
+ * don't bleed into each other.  They survive as long as the process runs
+ * (they are NOT persisted to disk).
  */
 
-/** @type {Map<string, string>} */
-const store = new Map();
+/**
+ * Top-level store: channelId → Map<key, value>
+ * Falls back to a "_global" bucket when no channelId is available.
+ * @type {Map<string, Map<string, string>>}
+ */
+const stores = new Map();
+
+/** Return (creating if needed) the note store for a given channel. */
+function getStore(channelId) {
+  const id = channelId || "_global";
+  if (!stores.has(id)) stores.set(id, new Map());
+  return stores.get(id);
+}
+
+/**
+ * Delete all notes belonging to a channel.
+ * Called by agent.js when the user clears conversation history.
+ * @param {string} channelId
+ */
+export function clearChannelNotes(channelId) {
+  stores.delete(channelId || "_global");
+}
 
 export const notesTool = {
   name: "notes",
@@ -45,10 +65,12 @@ export const notesTool = {
     required: ["operation"],
   },
 
-  execute({ operation, key, content }) {
+  execute({ operation, key, content }, context) {
+    const store = getStore(context?.channelId);
+
     switch (operation) {
       case "write": {
-        if (!key?.trim())     return "Error: key is required for write.";
+        if (!key?.trim())          return "Error: key is required for write.";
         if (content === undefined) return "Error: content is required for write.";
         store.set(key.trim(), String(content));
         return `Note "${key.trim()}" saved (${String(content).length} chars).`;
