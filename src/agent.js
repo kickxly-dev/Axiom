@@ -45,7 +45,7 @@ const DEFAULT_SYSTEM_PROMPT =
 function initConfig() {
   if (googleApiKey === null) {
     googleApiKey = process.env.GOOGLE_AI_API_KEY || "";
-    googleModel  = process.env.GOOGLE_AI_MODEL   || "gemini-2.0-flash";
+    googleModel  = process.env.GOOGLE_AI_MODEL   || "gemini-1.5-flash";
     verbosity    = (process.env.RESPONSE_VERBOSITY || "concise").toLowerCase();
     if (!VERBOSITY_INSTRUCTIONS[verbosity]) {
       console.warn(

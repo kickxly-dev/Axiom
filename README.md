@@ -84,7 +84,7 @@ MODE=discord
 GOOGLE_AI_API_KEY=your_google_ai_api_key_here
 
 # Model to use (default is fine)
-GOOGLE_AI_MODEL=gemini-2.0-flash
+GOOGLE_AI_MODEL=gemini-1.5-flash
 
 # Discord bot token (only needed for MODE=discord)
 DISCORD_TOKEN=your_discord_bot_token_here
@@ -231,7 +231,7 @@ That's it! Gemini will automatically discover and use the new tool based on the 
 |---|---|---|---|
 | `MODE` | ❌ | `discord` | Run mode: `discord` or `desktop` |
 | `GOOGLE_AI_API_KEY` | ✅ | — | Your Google AI Studio API key |
-| `GOOGLE_AI_MODEL` | ❌ | `gemini-2.0-flash` | Gemini model to use |
+| `GOOGLE_AI_MODEL` | ❌ | `gemini-1.5-flash` | Gemini model to use |
 | `DISCORD_TOKEN` | ✅ (discord) | — | Your Discord bot token |
 | `DISCORD_CLIENT_ID` | ❌ | — | Discord application ID (for slash commands) |
 | `SYSTEM_PROMPT` | ❌ | _built-in_ | AI personality / system instruction |
