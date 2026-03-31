@@ -7,6 +7,7 @@
  *   3. Feeds tool results back until a final text response is produced.
  */
 
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getToolDefinitions, getToolByName } from "./tools/index.js";
 import { clearChannelNotes } from "./tools/notes.js";
 
@@ -184,32 +185,59 @@ function parseGeminiResponse(data) {
 }
 
 /**
- * Build the Gemini API request body shared by both streaming and non-streaming.
+ * Build a Gemini SDK model instance for a single request.
  *
- * @param {Array<object>} messages  OpenAI-style messages (system may be at index 0)
- * @param {Array<object>} tools     Tool definitions from getToolDefinitions()
- * @returns {object}
+ * @param {string|null} systemInstruction
+ * @param {Array<object>} functionDeclarations
+ * @returns {import("@google/generative-ai").GenerativeModel}
  */
-function buildGeminiBody(messages, tools) {
-  const { systemInstruction, contents } = toGeminiContents(messages);
+function buildGeminiModel(systemInstruction, functionDeclarations) {
+  const genAI = new GoogleGenerativeAI(googleApiKey);
+  return genAI.getGenerativeModel({
+    model: googleModel,
+    ...(systemInstruction ? { systemInstruction } : {}),
+    ...(functionDeclarations.length > 0
+      ? { tools: [{ functionDeclarations }] }
+      : {}),
+  });
+}
 
-  const functionDeclarations = tools
+/**
+ * Convert tool definitions to Gemini functionDeclarations format.
+ *
+ * @param {Array<object>} tools  Tool definitions from getToolDefinitions()
+ * @returns {Array<object>}
+ */
+function toFunctionDeclarations(tools) {
+  return tools
     .filter((t) => t.type === "function")
     .map((t) => ({
       name:        t.function.name,
       description: t.function.description,
       parameters:  t.function.parameters,
     }));
+}
 
-  return {
-    contents,
-    ...(systemInstruction
-      ? { system_instruction: { parts: [{ text: systemInstruction }] } }
-      : {}),
-    ...(functionDeclarations.length > 0
-      ? { tools: [{ function_declarations: functionDeclarations }] }
-      : {}),
-  };
+/**
+ * Rethrow a Google AI SDK error with a human-readable message.
+ *
+ * @param {unknown} err
+ * @returns {never}
+ */
+function rethrowGeminiError(err) {
+  const status = err.status ?? err.statusCode;
+  if (status === 400) {
+    throw new Error(`Google AI Studio HTTP 400 (Bad request — check your GOOGLE_AI_MODEL name): ${err.message}`);
+  } else if (status === 403) {
+    throw new Error(`Google AI Studio HTTP 403 (Forbidden — check that GOOGLE_AI_API_KEY is valid): ${err.message}`);
+  } else if (status === 404) {
+    throw new Error(`Google AI Studio HTTP 404 (Model not found — check your GOOGLE_AI_MODEL name): ${err.message}`);
+  } else if (status === 429) {
+    throw new Error(`Google AI Studio HTTP 429 (Rate limited — too many requests): ${err.message}`);
+  } else if (status === 500 || status === 503) {
+    throw new Error(`Google AI Studio HTTP ${status} (Server error — please try again): ${err.message}`);
+  }
+  throw new Error(`Cannot reach Google AI Studio: ${err.message}`);
 }
 
 /**
@@ -220,40 +248,21 @@ function buildGeminiBody(messages, tools) {
  * @returns {Promise<{ role: "assistant", content: string, tool_calls?: Array }>}
  */
 async function geminiChat(messages, tools) {
-  const url  = `https://generativelanguage.googleapis.com/v1beta/models/${googleModel}:generateContent`;
-  const body = buildGeminiBody(messages, tools);
+  const { systemInstruction, contents } = toGeminiContents(messages);
+  const model = buildGeminiModel(systemInstruction, toFunctionDeclarations(tools));
 
-  let res;
+  let response;
   try {
-    res = await fetch(url, {
-      method:  "POST",
-      headers: {
-        "Content-Type":   "application/json",
-        "x-goog-api-key": googleApiKey,
-      },
-      body:    JSON.stringify(body),
-    });
+    const result = await model.generateContent({ contents });
+    response = result.response;
   } catch (err) {
-    throw new Error(`Cannot reach Google AI Studio: ${err.message}`);
+    rethrowGeminiError(err);
   }
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    let hint = "";
-    if (res.status === 400) {
-      hint = " (Bad request — check your GOOGLE_AI_MODEL name)";
-    } else if (res.status === 403) {
-      hint = " (Forbidden — check that GOOGLE_AI_API_KEY is valid)";
-    } else if (res.status === 429) {
-      hint = " (Rate limited — too many requests to Google AI Studio)";
-    } else if (res.status === 500 || res.status === 503) {
-      hint = " (Google AI Studio server error — please try again)";
-    }
-    throw new Error(`Google AI Studio returned HTTP ${res.status}${hint}: ${text}`);
-  }
-
-  const data = await res.json();
-  return parseGeminiResponse(data);
+  return parseGeminiResponse({
+    candidates:     response.candidates,
+    promptFeedback: response.promptFeedback,
+  });
 }
 
 // ── History ───────────────────────────────────────────────────────────────────
@@ -392,7 +401,7 @@ export function clearHistory(channelId) {
 // ── Streaming support ─────────────────────────────────────────────────────────
 
 /**
- * Async generator that streams SSE chunks from Google AI Studio.
+ * Async generator that streams response chunks from Google AI Studio.
  * Each yielded value is a normalised chunk: { content?: string, tool_calls?: Array }
  *
  * @param {Array<object>} messages
@@ -400,99 +409,53 @@ export function clearHistory(channelId) {
  * @yields {{ content: string, tool_calls?: Array }}
  */
 async function* geminiChatStream(messages, tools) {
-  const url  = `https://generativelanguage.googleapis.com/v1beta/models/${googleModel}:streamGenerateContent?alt=sse`;
-  const body = buildGeminiBody(messages, tools);
+  const { systemInstruction, contents } = toGeminiContents(messages);
+  const model = buildGeminiModel(systemInstruction, toFunctionDeclarations(tools));
 
-  let res;
+  let streamResult;
   try {
-    res = await fetch(url, {
-      method:  "POST",
-      headers: {
-        "Content-Type":   "application/json",
-        "x-goog-api-key": googleApiKey,
-      },
-      body:    JSON.stringify(body),
-    });
+    streamResult = await model.generateContentStream({ contents });
   } catch (err) {
-    throw new Error(`Cannot reach Google AI Studio: ${err.message}`);
+    rethrowGeminiError(err);
   }
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    let hint = "";
-    if (res.status === 400) {
-      hint = " (Bad request — check your GOOGLE_AI_MODEL name)";
-    } else if (res.status === 403) {
-      hint = " (Forbidden — check that GOOGLE_AI_API_KEY is valid)";
-    } else if (res.status === 429) {
-      hint = " (Rate limited — too many requests to Google AI Studio)";
-    }
-    throw new Error(`Google AI Studio returned HTTP ${res.status}${hint}: ${text}`);
-  }
+  for await (const chunk of streamResult.stream) {
+    const candidate = chunk.candidates?.[0];
+    if (!candidate) continue;
 
-  const reader  = res.body.getReader();
-  const decoder = new TextDecoder();
-  let   buffer  = "";
+    const parts      = candidate.content?.parts || [];
+    let   text       = "";
+    const tool_calls = [];
 
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? ""; // keep any incomplete trailing line
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith("data: ")) continue;
-        const jsonStr = trimmed.slice(6); // strip "data: " prefix
-        if (jsonStr === "[DONE]") return;
-        try {
-          const chunk     = JSON.parse(jsonStr);
-          const candidate = chunk.candidates?.[0];
-          if (!candidate) continue;
-
-          const parts      = candidate.content?.parts || [];
-          let   text       = "";
-          const tool_calls = [];
-
-          for (const part of parts) {
-            if (part.text) {
-              text += part.text;
-            } else if (part.functionCall) {
-              tool_calls.push({
-                function: {
-                  name:      part.functionCall.name,
-                  arguments: part.functionCall.args || {},
-                },
-              });
-            }
-          }
-
-          yield {
-            content:    text,
-            tool_calls: tool_calls.length > 0 ? tool_calls : undefined,
-          };
-
-          // Stop streaming once the model signals it is done
-          if (
-            candidate.finishReason &&
-            candidate.finishReason !== "STOP" &&
-            candidate.finishReason !== "MAX_TOKENS"
-          ) {
-            console.warn(
-              `[Agent] Gemini stream ended with finishReason="${candidate.finishReason}"`
-            );
-            return;
-          }
-        } catch {
-          // ignore malformed lines
-        }
+    for (const part of parts) {
+      if (part.text) {
+        text += part.text;
+      } else if (part.functionCall) {
+        tool_calls.push({
+          function: {
+            name:      part.functionCall.name,
+            arguments: part.functionCall.args || {},
+          },
+        });
       }
     }
-  } finally {
-    reader.releaseLock();
+
+    yield {
+      content:    text,
+      tool_calls: tool_calls.length > 0 ? tool_calls : undefined,
+    };
+
+    // Stop streaming once the model signals it is done
+    if (
+      candidate.finishReason &&
+      candidate.finishReason !== "STOP" &&
+      candidate.finishReason !== "MAX_TOKENS"
+    ) {
+      console.warn(
+        `[Agent] Gemini stream ended with finishReason="${candidate.finishReason}"`
+      );
+      return;
+    }
   }
 }
 
