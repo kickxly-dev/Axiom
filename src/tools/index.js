@@ -19,6 +19,13 @@ import { defineTool } from "./define.js";
 import { jokeTool } from "./joke.js";
 import { coinflipTool } from "./coinflip.js";
 import { unitconvertTool } from "./unitconvert.js";
+import { webSearchTool } from "./web_search.js";
+import { weatherTool } from "./weather.js";
+import { sysinfoTool } from "./sysinfo.js";
+import { filesTool } from "./files.js";
+import { runCodeTool } from "./run_code.js";
+import { shellTool } from "./shell.js";
+import { notesTool } from "./notes.js";
 
 /** @type {Array<import("./types.js").Tool>} */
 export const tools = [
@@ -29,6 +36,13 @@ export const tools = [
   jokeTool,
   coinflipTool,
   unitconvertTool,
+  webSearchTool,
+  weatherTool,
+  sysinfoTool,
+  filesTool,
+  runCodeTool,
+  shellTool,
+  notesTool,
 ];
 
 /**

@@ -1,6 +1,8 @@
-# Axiom 🧠
+# Axiom
 
-**Axiom** is an AI brain Discord bot — and desktop chat app — powered by a **local [Ollama](https://ollama.com)** server running the **phi3:mini** model. No cloud API keys, no monthly bill, completely private.
+**Axiom** is a local AI agent desktop app — and Discord bot — powered by a **local [Ollama](https://ollama.com)** server. No cloud API keys, no monthly bill, completely private.
+
+The desktop GUI (`npm run app`) delivers a clean, minimal chat interface with streaming responses, multi-session history, and a growing tool set. The original terminal REPL and Discord bot modes are still fully supported.
 
 ---
 
@@ -8,17 +10,26 @@
 
 | Feature | Details |
 |---|---|
-| 💬 Discord Integration | Mention `@Axiom` in a server, or DM it directly |
-| 🖥️ Desktop Mode | Polished interactive terminal chat — no Discord required |
+| 🖥️ Desktop GUI | Clean dark-mode Electron app — streaming responses, session sidebar, tool pills |
+| 💬 Discord Bot | Mention `@Axiom` in a server, or DM it directly |
+| 🎯 Terminal REPL | Polished interactive terminal chat — `npm run desktop` |
 | 🧠 AI Conversations | Full multi-turn conversation memory per channel/session |
-| 🔧 Tool / Agent Loop | Ollama calls tools automatically to complete tasks (ReAct) |
+| ⚡ Streaming | Tokens stream in real-time as the model generates them |
+| 🔧 Agent Tool Loop | Ollama calls tools automatically (ReAct pattern) |
 | 🔢 Calculator | Evaluate any math expression |
 | 🕐 Date & Time | Get the current date/time in any timezone |
-| ⏰ Reminders | "Remind me in 10 minutes to drink water" |
-| 📖 Word Definitions | Look up any English word |
+| ⏰ Reminders | "Remind me in 10 minutes to take a break" |
+| 📖 Word Definitions | Look up any English word via free dictionary API |
 | 😄 Jokes | Fetch a random joke by category |
 | 🪙 Coin Flip / Dice | Flip a coin, roll a die, or pick randomly from a list |
 | 📐 Unit Conversion | Convert between length, weight, volume, speed, and temperature |
+| 🔍 Web Search | DuckDuckGo instant-answer lookups (no API key) |
+| 🌤️ Weather | Current conditions for any city via Open-Meteo (no API key) |
+| 💻 System Info | CPU, memory, OS, uptime — all local |
+| 📁 File Reader | Read local text files and list directories safely |
+| ▶️ Code Runner | Write and execute JavaScript or Python 3 code — run_code tool |
+| 🐚 Shell | Run shell commands locally with safety guardrails |
+| 📝 Notes | Agent scratchpad: save/read/list notes across tool rounds |
 | 🔒 100% Local | All inference runs on your own machine via Ollama |
 | ➕ Extensible | Add your own tools in minutes (see below) |
 
@@ -145,7 +156,23 @@ DISCORD_TOKEN=your_discord_bot_token_here
 
 ### Step 8 — Run Axiom
 
-#### Discord bot mode (default)
+#### Desktop GUI (recommended)
+
+```bash
+npm run app
+```
+
+Opens the Electron desktop app with a clean dark-mode chat interface. Sessions are persisted between restarts.
+
+#### Terminal REPL
+
+```bash
+npm run desktop
+```
+
+A polished interactive terminal chat with spinner, ANSI colours, and built-in commands (`clear`, `help`, `exit`).
+
+#### Discord bot mode
 
 ```bash
 npm start
@@ -158,19 +185,13 @@ You should see:
 ✅ Axiom is online as Axiom#1234
 ```
 
-#### Desktop / terminal mode
-
-```bash
-npm run desktop
-# or
-MODE=desktop npm start
-```
-
-You should see a coloured terminal interface with a spinner while Axiom thinks.
-
 ---
 
 ## 💬 How to Use
+
+### Desktop GUI
+
+Type in the composer at the bottom of the window and press **Enter** (or **Shift+Enter** for a newline). Click a session in the sidebar to switch context, or click **New chat** to start fresh. Tool calls are shown as collapsible pills — click one to expand the raw result.
 
 ### Discord
 
@@ -179,9 +200,9 @@ You should see a coloured terminal interface with a spinner while Axiom thinks.
 | Server channel | `@Axiom <your message>` or start with `axiom <your message>` |
 | Direct Message | Just send a message directly to the bot |
 
-### Desktop
+### Terminal REPL
 
-Type in the terminal and press **Enter**. Use these built-in commands:
+Type and press **Enter**. Built-in commands:
 
 | Command | Action |
 |---|---|
@@ -189,7 +210,7 @@ Type in the terminal and press **Enter**. Use these built-in commands:
 | `help` | Show available commands and example prompts |
 | `exit` | Quit Axiom |
 
-### Example prompts (both modes)
+### Example prompts
 
 ```
 What is 15% of 847?
@@ -197,10 +218,15 @@ What time is it in Tokyo?
 Remind me in 5 minutes to take a break
 Define the word "ephemeral"
 Tell me a programming joke
-Flip a coin
-Roll a d20
+Flip a coin / Roll a d20
 Convert 100 miles to km
-Convert 98.6°F to Celsius
+What's the weather in London?
+Search for the latest news on Rust programming
+Show my system info
+Read ~/Documents/notes.txt
+Write and run Python code to print the first 20 prime numbers
+Run: ls -la ~ and tell me what's in my home folder
+Find all .js files in my home folder and count them
 clear          ← resets conversation history
 ```
 

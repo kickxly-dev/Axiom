@@ -37,11 +37,15 @@ const VERBOSITY_INSTRUCTIONS = {
 };
 
 const DEFAULT_SYSTEM_PROMPT =
-  "You are Axiom — a fast, knowledgeable AI assistant with a direct personality. " +
-  "You sound like a smart friend who actually knows their stuff, not a help-desk script. " +
-  "Never open with filler phrases like 'Great question!', 'Certainly!', 'Sure!', or 'Of course!'. " +
-  "Get straight to the answer. Use tools whenever they give a more accurate result. " +
-  "When you don't know something, say so plainly instead of guessing.";
+  "You are Axiom — an AI agent that reasons, plans, and acts. " +
+  "You have tools that let you run code, execute shell commands, search the web, " +
+  "check weather, read files, do math, save notes, and more. " +
+  "When the user asks you to do something, use your tools — don't just describe what could be done. " +
+  "For anything computational, write and run actual code with run_code instead of estimating. " +
+  "For multi-step tasks, chain tools together across rounds: save intermediate results to notes, " +
+  "then build on them. Plan first when the task is complex, then execute step by step. " +
+  "Never say you can't do something without trying your tools first. " +
+  "Be direct and action-oriented. Get straight to results.";
 
 function initConfig() {
   if (ollamaEndpoint === null) {
@@ -57,7 +61,7 @@ function initConfig() {
     }
     const basePrompt = process.env.SYSTEM_PROMPT || DEFAULT_SYSTEM_PROMPT;
     systemPrompt = `${basePrompt}\n\nTone & length: ${VERBOSITY_INSTRUCTIONS[verbosity]}`;
-    maxToolRounds = parseInt(process.env.MAX_TOOL_ROUNDS || "5", 10);
+    maxToolRounds = parseInt(process.env.MAX_TOOL_ROUNDS || "10", 10);
   }
 
   // Reset tool-support tracking whenever the configured model changes.
@@ -241,4 +245,204 @@ export async function processMessage(channelId, userMessage, context = {}) {
  */
 export function clearHistory(channelId) {
   channelHistories.delete(channelId);
+}
+
+// ── streaming support ─────────────────────────────────────────────────────────
+
+/**
+ * Async generator that streams NDJSON chunks from Ollama's chat API.
+ * Each yielded value is a parsed Ollama chunk object: { message, done, ... }
+ * @param {Array<object>} messages
+ * @param {Array<object>} tools
+ * @yields {object} Parsed Ollama chunk — { message: { role, content, tool_calls? }, done: boolean }
+ */
+async function* ollamaChatStream(messages, tools) {
+  const url = `${ollamaEndpoint}/api/chat`;
+
+  const body = {
+    model: ollamaModel,
+    messages,
+    ...(modelToolsUnsupported ? {} : { tools }),
+    stream: true,
+  };
+
+  let res;
+  try {
+    res = await fetch(url, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(body),
+    });
+  } catch (err) {
+    throw new Error(
+      `Cannot reach Ollama at ${ollamaEndpoint}. Make sure Ollama is running. (${err.message})`
+    );
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+
+    // Gracefully handle models that don't support the tools API
+    const isToolsUnsupported = (() => {
+      if (res.status !== 400) return false;
+      try {
+        const json = JSON.parse(text);
+        return typeof json.error === "string" && json.error.includes("does not support tools");
+      } catch {
+        return text.includes("does not support tools");
+      }
+    })();
+    if (isToolsUnsupported) {
+      console.warn(
+        `[Agent] Model "${ollamaModel}" does not support tools — falling back to plain chat.`
+      );
+      modelToolsUnsupported = true;
+      yield* ollamaChatStream(messages, []);
+      return;
+    }
+
+    let hint = "";
+    if (res.status === 404) {
+      hint = ` (Model "${ollamaModel}" may not be pulled — run: ollama pull ${ollamaModel})`;
+    } else if (res.status === 400) {
+      hint = ` (Bad request — check that the model name "${ollamaModel}" is correct)`;
+    } else if (res.status === 500) {
+      hint = " (Ollama internal error — check the Ollama server logs)";
+    }
+    throw new Error(`Ollama returned HTTP ${res.status}${hint}: ${text}`);
+  }
+
+  const reader  = res.body.getReader();
+  const decoder = new TextDecoder();
+  let   buffer  = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? ""; // keep any incomplete trailing line
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const chunk = JSON.parse(trimmed);
+          yield chunk;
+          if (chunk.done) return;
+        } catch {
+          // ignore malformed lines
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+/**
+ * Process a user message through the Ollama agent loop, streaming response tokens
+ * back to the caller via context callbacks.
+ *
+ * @param {string} channelId    - Unique identifier for the conversation channel.
+ * @param {string} userMessage  - The text the user sent.
+ * @param {object} [context]    - Optional context object:
+ *   - onChunk(text)            — called for each streamed text token
+ *   - onToolCall(name, args)   — called when the model invokes a tool
+ *   - onToolResult(name, res)  — called after a tool finishes executing
+ *   - sendCallback             — legacy reminder delivery callback
+ * @returns {Promise<string>}   - The complete final text response.
+ */
+export async function processMessageStream(channelId, userMessage, context = {}) {
+  initConfig();
+
+  if (!channelHistories.has(channelId)) {
+    channelHistories.set(channelId, []);
+  }
+  const history = channelHistories.get(channelId);
+  history.push({ role: "user", content: userMessage });
+
+  const messages  = [{ role: "system", content: systemPrompt }, ...history];
+  const toolDefs  = getToolDefinitions();
+
+  for (let round = 0; round < maxToolRounds; round++) {
+    let fullContent = "";
+    let toolCalls   = null;
+
+    // Stream this round's response
+    for await (const chunk of ollamaChatStream(messages, toolDefs)) {
+      const msg = chunk.message;
+      if (!msg) continue;
+
+      if (msg.content) {
+        fullContent += msg.content;
+        // Only forward content chunks when no tool call is pending
+        if (!toolCalls) {
+          context.onChunk?.(msg.content);
+        }
+      }
+
+      if (msg.tool_calls?.length) {
+        toolCalls = msg.tool_calls;
+      }
+    }
+
+    const assistantMessage = {
+      role:    "assistant",
+      content: fullContent,
+      ...(toolCalls ? { tool_calls: toolCalls } : {}),
+    };
+    messages.push(assistantMessage);
+
+    // No tool calls → this is the final response
+    if (!toolCalls || toolCalls.length === 0) {
+      channelHistories.set(channelId, messages.slice(1));
+      return fullContent || "_(No response generated)_";
+    }
+
+    // Execute each requested tool
+    for (const toolCall of toolCalls) {
+      const { name, arguments: args } = toolCall.function;
+      const argsDisplay = typeof args === "string" ? args : JSON.stringify(args);
+      console.log(`[Agent] Tool call: ${name}(${argsDisplay})`);
+
+      context.onToolCall?.(name, args);
+
+      const tool = getToolByName(name);
+      let result;
+
+      if (!tool) {
+        result = `Error: tool "${name}" is not registered.`;
+      } else {
+        let parsedArgs;
+        if (typeof args === "string") {
+          try {
+            parsedArgs = JSON.parse(args);
+          } catch (err) {
+            result = `Error parsing arguments for tool "${name}": ${err.message}`;
+          }
+        } else {
+          parsedArgs = args;
+        }
+
+        if (parsedArgs !== undefined) {
+          try {
+            result = await Promise.resolve(tool.execute(parsedArgs, context));
+          } catch (err) {
+            result = `Error executing tool "${name}": ${err.message}`;
+          }
+        }
+      }
+
+      console.log(`[Agent] Tool result for ${name}: ${result}`);
+      context.onToolResult?.(name, result);
+
+      messages.push({ role: "tool", content: String(result) });
+    }
+  }
+
+  channelHistories.set(channelId, messages.slice(1));
+  return "_(Max tool rounds reached without a final response)_";
 }
