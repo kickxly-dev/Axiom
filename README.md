@@ -9,14 +9,17 @@
 | Feature | Details |
 |---|---|
 | 💬 Discord Integration | Mention `@Axiom` in a server, or DM it directly |
-| 🖥️ Desktop Mode | Interactive terminal chat — no Discord required |
+| 🖥️ Desktop Mode | Polished interactive terminal chat — no Discord required |
 | 🧠 AI Conversations | Full multi-turn conversation memory per channel/session |
 | 🔧 Tool / Agent Loop | Ollama calls tools automatically to complete tasks (ReAct) |
 | 🔢 Calculator | Evaluate any math expression |
 | 🕐 Date & Time | Get the current date/time in any timezone |
 | ⏰ Reminders | "Remind me in 10 minutes to drink water" |
 | 📖 Word Definitions | Look up any English word |
-| 🔒 100 % Local | All inference runs on your own machine via Ollama |
+| 😄 Jokes | Fetch a random joke by category |
+| 🪙 Coin Flip / Dice | Flip a coin, roll a die, or pick randomly from a list |
+| 📐 Unit Conversion | Convert between length, weight, volume, speed, and temperature |
+| 🔒 100% Local | All inference runs on your own machine via Ollama |
 | ➕ Extensible | Add your own tools in minutes (see below) |
 
 ---
@@ -163,19 +166,7 @@ npm run desktop
 MODE=desktop npm start
 ```
 
-You should see:
-
-```
-🚀 Starting Axiom AI Brain (Desktop Mode)...
-╔══════════════════════════════════════════╗
-║   Axiom 🧠  —  Desktop Mode              ║
-║   Type your message and press Enter.     ║
-║   Type "clear" to reset conversation.   ║
-║   Type "exit" or press Ctrl+C to quit.  ║
-╚══════════════════════════════════════════╝
-
-You:
-```
+You should see a coloured terminal interface with a spinner while Axiom thinks.
 
 ---
 
@@ -190,16 +181,26 @@ You:
 
 ### Desktop
 
-Just type in the terminal and press **Enter**.
+Type in the terminal and press **Enter**. Use these built-in commands:
 
-### Example commands (both modes)
+| Command | Action |
+|---|---|
+| `clear` | Reset conversation history |
+| `help` | Show available commands and example prompts |
+| `exit` | Quit Axiom |
+
+### Example prompts (both modes)
 
 ```
 What is 15% of 847?
 What time is it in Tokyo?
 Remind me in 5 minutes to take a break
 Define the word "ephemeral"
-Explain how black holes work
+Tell me a programming joke
+Flip a coin
+Roll a d20
+Convert 100 miles to km
+Convert 98.6°F to Celsius
 clear          ← resets conversation history
 ```
 
@@ -233,7 +234,7 @@ export const myTool = {
 ```js
 import { myTool } from "./myTool.js";
 
-export const tools = [calculatorTool, datetimeTool, remindTool, defineTool, myTool];
+export const tools = [...existingTools, myTool];
 ```
 
 That's it! Ollama will automatically discover and use the new tool based on the `description`.
@@ -259,24 +260,24 @@ That's it! Ollama will automatically discover and use the new tool based on the 
 
 ### Verbosity mode
 
-Axiom's response length is controlled by the `RESPONSE_VERBOSITY` environment variable. Set it in your `.env` file:
+Axiom's response length is controlled by the `RESPONSE_VERBOSITY` environment variable:
 
 ```env
-# Short, natural replies (default) — like a smart friend texting back
+# Short, natural replies (default)
 RESPONSE_VERBOSITY=concise
 
-# Thorough explanations with steps and context when needed
+# Thorough explanations with steps and context
 RESPONSE_VERBOSITY=detailed
 ```
 
 | Mode | Behaviour |
 |---|---|
-| `concise` | One or two sentences where possible; skips filler words and over-explanation |
-| `detailed` | Full answers with bullet points and background context when the topic warrants it |
+| `concise` | One or two sentences where possible; no filler or over-explanation |
+| `detailed` | Full answers with bullet points and background context |
 
 ### Custom personality
 
-Override the base system prompt entirely via `SYSTEM_PROMPT` to give Axiom a different name, role, or tone:
+Override the base system prompt entirely via `SYSTEM_PROMPT`:
 
 ```env
 # Chill, casual assistant
@@ -286,7 +287,7 @@ SYSTEM_PROMPT=You are Axiom, a chill and witty assistant. Keep it real.
 SYSTEM_PROMPT=You are Axiom, a professional AI assistant. Be precise and formal at all times.
 ```
 
-> **Tip:** `RESPONSE_VERBOSITY` stacks on top of your custom `SYSTEM_PROMPT`, so you can combine them freely.
+> **Tip:** `RESPONSE_VERBOSITY` stacks on top of your custom `SYSTEM_PROMPT`.
 
 ---
 
@@ -304,7 +305,10 @@ Axiom/
 │       ├── calculator.js ← Math evaluator
 │       ├── datetime.js   ← Date/time lookup
 │       ├── remind.js     ← Reminder timer
-│       └── define.js     ← Dictionary lookup
+│       ├── define.js     ← Dictionary lookup
+│       ├── joke.js       ← Random joke fetcher
+│       ├── coinflip.js   ← Coin flip / dice roll / random pick
+│       └── unitconvert.js← Unit conversion
 ├── .env.example          ← Template for your .env file
 ├── .gitignore
 ├── package.json

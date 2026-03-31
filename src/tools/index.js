@@ -16,9 +16,20 @@ import { calculatorTool } from "./calculator.js";
 import { datetimeTool } from "./datetime.js";
 import { remindTool } from "./remind.js";
 import { defineTool } from "./define.js";
+import { jokeTool } from "./joke.js";
+import { coinflipTool } from "./coinflip.js";
+import { unitconvertTool } from "./unitconvert.js";
 
 /** @type {Array<import("./types.js").Tool>} */
-export const tools = [calculatorTool, datetimeTool, remindTool, defineTool];
+export const tools = [
+  calculatorTool,
+  datetimeTool,
+  remindTool,
+  defineTool,
+  jokeTool,
+  coinflipTool,
+  unitconvertTool,
+];
 
 /**
  * Build the Ollama-compatible tool definitions array.
