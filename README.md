@@ -53,6 +53,8 @@ The desktop GUI (`npm run app`) delivers a clean, minimal chat interface with st
 > The free tier of Google AI Studio is generous enough for personal use.  
 > You can choose a more powerful model (e.g. `gemini-1.5-pro`) by setting `GOOGLE_AI_MODEL` in your `.env`.
 
+> **Note:** Axiom uses the official `@google/generative-ai` SDK (not the legacy v1beta REST endpoint) so `gemini-1.5-flash` and newer models work out of the box. If you previously cloned the repo and got a `404 models/gemini-1.5-flash is not found for API version v1beta` error, run `git pull` followed by `npm install` to pick up the SDK and the fix.
+
 ---
 
 ### Step 2 — Clone / Download Axiom
