@@ -8,12 +8,14 @@
  */
 
 import { getToolDefinitions, getToolByName } from "./tools/index.js";
+import { clearChannelNotes } from "./tools/notes.js";
 
-let ollamaEndpoint = null;
-let ollamaModel = null;
-let systemPrompt = null;
-let maxToolRounds = null;
-let verbosity = null;
+let ollamaEndpoint    = null;
+let ollamaModel       = null;
+let systemPrompt      = null;
+let maxToolRounds     = null;
+let maxHistoryTurns   = null;
+let verbosity         = null;
 
 /**
  * Tracks whether the current model has been confirmed to not support tools.
@@ -61,7 +63,8 @@ function initConfig() {
     }
     const basePrompt = process.env.SYSTEM_PROMPT || DEFAULT_SYSTEM_PROMPT;
     systemPrompt = `${basePrompt}\n\nTone & length: ${VERBOSITY_INSTRUCTIONS[verbosity]}`;
-    maxToolRounds = parseInt(process.env.MAX_TOOL_ROUNDS || "10", 10);
+    maxToolRounds = parseInt(process.env.MAX_TOOL_ROUNDS || "5", 10);
+    maxHistoryTurns = parseInt(process.env.MAX_HISTORY_TURNS || "20", 10);
   }
 
   // Reset tool-support tracking whenever the configured model changes.
@@ -146,6 +149,30 @@ async function ollamaChat(messages, tools) {
 const channelHistories = new Map();
 
 /**
+ * Prune a history array to at most `maxTurns` user-initiated exchanges.
+ * Finds the start of the (maxTurns)-th-from-the-end user message and slices
+ * from there, so we never cut in the middle of a tool-call sequence.
+ *
+ * @param {Array<object>} history
+ * @param {number} maxTurns  0 = no pruning
+ * @returns {Array<object>}
+ */
+function pruneHistory(history, maxTurns) {
+  if (maxTurns <= 0) return history;
+
+  let userCount = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].role === "user") {
+      userCount++;
+      if (userCount === maxTurns) {
+        return history.slice(i);
+      }
+    }
+  }
+  return history; // fewer than maxTurns user messages — keep everything
+}
+
+/**
  * Process a user message through the Ollama agent loop.
  *
  * @param {string} channelId   - Unique identifier for the conversation channel.
@@ -184,8 +211,8 @@ export async function processMessage(channelId, userMessage, context = {}) {
       !assistantMessage.tool_calls ||
       assistantMessage.tool_calls.length === 0
     ) {
-      // Persist the updated history (excluding the system prompt)
-      channelHistories.set(channelId, messages.slice(1));
+      // Persist the updated history (excluding the system prompt), pruned to maxHistoryTurns
+      channelHistories.set(channelId, pruneHistory(messages.slice(1), maxHistoryTurns));
       return assistantMessage.content || "_(No response generated)_";
     }
 
@@ -217,7 +244,7 @@ export async function processMessage(channelId, userMessage, context = {}) {
 
         if (parsedArgs !== undefined) {
           try {
-            result = await Promise.resolve(tool.execute(parsedArgs, context));
+            result = await Promise.resolve(tool.execute(parsedArgs, { channelId, ...context }));
           } catch (err) {
             result = `Error executing tool "${name}": ${err.message}`;
           }
@@ -235,16 +262,17 @@ export async function processMessage(channelId, userMessage, context = {}) {
   }
 
   // Fallback: max tool rounds exhausted without a final text response
-  channelHistories.set(channelId, messages.slice(1));
+  channelHistories.set(channelId, pruneHistory(messages.slice(1), maxHistoryTurns));
   return "_(Max tool rounds reached without a final response)_";
 }
 
 /**
- * Clear the conversation history for a channel.
+ * Clear the conversation history and per-channel notes for a channel.
  * @param {string} channelId
  */
 export function clearHistory(channelId) {
   channelHistories.delete(channelId);
+  clearChannelNotes(channelId);
 }
 
 // ── streaming support ─────────────────────────────────────────────────────────
@@ -398,7 +426,7 @@ export async function processMessageStream(channelId, userMessage, context = {})
 
     // No tool calls → this is the final response
     if (!toolCalls || toolCalls.length === 0) {
-      channelHistories.set(channelId, messages.slice(1));
+      channelHistories.set(channelId, pruneHistory(messages.slice(1), maxHistoryTurns));
       return fullContent || "_(No response generated)_";
     }
 
@@ -429,7 +457,7 @@ export async function processMessageStream(channelId, userMessage, context = {})
 
         if (parsedArgs !== undefined) {
           try {
-            result = await Promise.resolve(tool.execute(parsedArgs, context));
+            result = await Promise.resolve(tool.execute(parsedArgs, { channelId, ...context }));
           } catch (err) {
             result = `Error executing tool "${name}": ${err.message}`;
           }
@@ -443,6 +471,6 @@ export async function processMessageStream(channelId, userMessage, context = {})
     }
   }
 
-  channelHistories.set(channelId, messages.slice(1));
+  channelHistories.set(channelId, pruneHistory(messages.slice(1), maxHistoryTurns));
   return "_(Max tool rounds reached without a final response)_";
 }
