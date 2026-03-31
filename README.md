@@ -27,6 +27,9 @@ The desktop GUI (`npm run app`) delivers a clean, minimal chat interface with st
 | 🌤️ Weather | Current conditions for any city via Open-Meteo (no API key) |
 | 💻 System Info | CPU, memory, OS, uptime — all local |
 | 📁 File Reader | Read local text files and list directories safely |
+| ▶️ Code Runner | Write and execute JavaScript or Python 3 code — run_code tool |
+| 🐚 Shell | Run shell commands locally with safety guardrails |
+| 📝 Notes | Agent scratchpad: save/read/list notes across tool rounds |
 | 🔒 100% Local | All inference runs on your own machine via Ollama |
 | ➕ Extensible | Add your own tools in minutes (see below) |
 
@@ -221,6 +224,9 @@ What's the weather in London?
 Search for the latest news on Rust programming
 Show my system info
 Read ~/Documents/notes.txt
+Write and run Python code to print the first 20 prime numbers
+Run: ls -la ~ and tell me what's in my home folder
+Find all .js files in my home folder and count them
 clear          ← resets conversation history
 ```
 

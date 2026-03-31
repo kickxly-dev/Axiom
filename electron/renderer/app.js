@@ -246,7 +246,11 @@ function buildToolPill(tc, done) {
 
   const resultPre = document.createElement("pre");
   resultPre.className = "tool-result-pre";
-  resultPre.textContent = tc.result ? JSON.stringify(tc.result, null, 2) : "";
+  if (tc.result !== undefined && tc.result !== null) {
+    resultPre.textContent = typeof tc.result === "string"
+      ? tc.result
+      : JSON.stringify(tc.result, null, 2);
+  }
 
   pill.addEventListener("click", () => {
     if (resultPre.textContent) wrap.classList.toggle("expanded");
