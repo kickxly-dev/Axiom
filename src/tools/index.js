@@ -21,7 +21,7 @@ import { defineTool } from "./define.js";
 export const tools = [calculatorTool, datetimeTool, remindTool, defineTool];
 
 /**
- * Build the Groq/OpenAI-compatible tool definitions array.
+ * Build the Ollama-compatible tool definitions array.
  * @returns {Array<{ type: "function", function: { name: string, description: string, parameters: object } }>}
  */
 export function getToolDefinitions() {
