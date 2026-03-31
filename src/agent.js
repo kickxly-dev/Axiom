@@ -13,6 +13,7 @@ let ollamaEndpoint = null;
 let ollamaModel = null;
 let systemPrompt = null;
 let maxToolRounds = null;
+let maxHistoryMessages = null;
 let verbosity = null;
 
 /**
@@ -62,6 +63,7 @@ function initConfig() {
     const basePrompt = process.env.SYSTEM_PROMPT || DEFAULT_SYSTEM_PROMPT;
     systemPrompt = `${basePrompt}\n\nTone & length: ${VERBOSITY_INSTRUCTIONS[verbosity]}`;
     maxToolRounds = parseInt(process.env.MAX_TOOL_ROUNDS || "10", 10);
+    maxHistoryMessages = parseInt(process.env.MAX_HISTORY_MESSAGES || "40", 10);
   }
 
   // Reset tool-support tracking whenever the configured model changes.
@@ -146,6 +148,19 @@ async function ollamaChat(messages, tools) {
 const channelHistories = new Map();
 
 /**
+ * Trim a history array to the most recent `maxHistoryMessages` entries,
+ * keeping an even number of turns where possible to avoid orphaned tool messages.
+ * @param {Array<object>} history
+ * @returns {Array<object>}
+ */
+function trimHistory(history) {
+  if (maxHistoryMessages <= 0 || history.length <= maxHistoryMessages) {
+    return history;
+  }
+  return history.slice(-maxHistoryMessages);
+}
+
+/**
  * Process a user message through the Ollama agent loop.
  *
  * @param {string} channelId   - Unique identifier for the conversation channel.
@@ -167,7 +182,7 @@ export async function processMessage(channelId, userMessage, context = {}) {
 
   const messages = [
     { role: "system", content: systemPrompt },
-    ...history,
+    ...trimHistory(history),
   ];
 
   const toolDefs = getToolDefinitions();
@@ -245,6 +260,21 @@ export async function processMessage(channelId, userMessage, context = {}) {
  */
 export function clearHistory(channelId) {
   channelHistories.delete(channelId);
+}
+
+/**
+ * Return a snapshot of the current agent configuration.
+ * Initialises config lazily if not already done.
+ * @returns {{ model: string, verbosity: string, maxToolRounds: number, maxHistoryMessages: number }}
+ */
+export function getConfigSnapshot() {
+  initConfig();
+  return {
+    model:              ollamaModel,
+    verbosity,
+    maxToolRounds,
+    maxHistoryMessages,
+  };
 }
 
 // ── streaming support ─────────────────────────────────────────────────────────
@@ -364,7 +394,7 @@ export async function processMessageStream(channelId, userMessage, context = {})
   const history = channelHistories.get(channelId);
   history.push({ role: "user", content: userMessage });
 
-  const messages  = [{ role: "system", content: systemPrompt }, ...history];
+  const messages  = [{ role: "system", content: systemPrompt }, ...trimHistory(history)];
   const toolDefs  = getToolDefinitions();
 
   for (let round = 0; round < maxToolRounds; round++) {
