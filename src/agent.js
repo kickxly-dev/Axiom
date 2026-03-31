@@ -1,31 +1,24 @@
 /**
  * agent.js
  *
- * Core AI agent loop that:
- *   1. Sends user messages to a local Ollama server.
- *   2. Handles tool-call responses by executing the matching tool.
- *   3. Feeds tool results back to Ollama until a final text response is produced.
+ * Core AI agent loop powered by Google AI Studio (Gemini).
+ *   1. Sends user messages to Google AI Studio.
+ *   2. Handles function-call responses by executing the matching tool.
+ *   3. Feeds tool results back until a final text response is produced.
  */
 
 import { getToolDefinitions, getToolByName } from "./tools/index.js";
 import { clearChannelNotes } from "./tools/notes.js";
 
-let ollamaEndpoint    = null;
-let ollamaModel       = null;
-let systemPrompt      = null;
-let maxToolRounds     = null;
-let maxHistoryTurns   = null;
-let verbosity         = null;
+let googleApiKey    = null;
+let googleModel     = null;
+let systemPrompt    = null;
+let maxToolRounds   = null;
+let maxHistoryTurns = null;
+let verbosity       = null;
 
 /**
- * Tracks whether the current model has been confirmed to not support tools.
- * Set to true on a "does not support tools" 400 response; resets when model changes.
- */
-let modelToolsUnsupported = false;
-let lastKnownModel = null;
-
-/**
- * Read Ollama config from environment (lazily, so dotenv is loaded first).
+ * Read Google AI Studio config from environment (lazily, so dotenv is loaded first).
  */
 const VERBOSITY_INSTRUCTIONS = {
   concise:
@@ -50,11 +43,10 @@ const DEFAULT_SYSTEM_PROMPT =
   "Be direct and action-oriented. Get straight to results.";
 
 function initConfig() {
-  if (ollamaEndpoint === null) {
-    ollamaEndpoint =
-      (process.env.OLLAMA_ENDPOINT || "http://localhost:11434").replace(/\/$/, "");
-    ollamaModel = process.env.OLLAMA_MODEL || "phi3:mini";
-    verbosity = (process.env.RESPONSE_VERBOSITY || "concise").toLowerCase();
+  if (googleApiKey === null) {
+    googleApiKey = process.env.GOOGLE_AI_API_KEY || "";
+    googleModel  = process.env.GOOGLE_AI_MODEL   || "gemini-2.0-flash";
+    verbosity    = (process.env.RESPONSE_VERBOSITY || "concise").toLowerCase();
     if (!VERBOSITY_INSTRUCTIONS[verbosity]) {
       console.warn(
         `[Agent] Unknown RESPONSE_VERBOSITY "${verbosity}" — falling back to "concise".`
@@ -63,83 +55,208 @@ function initConfig() {
     }
     const basePrompt = process.env.SYSTEM_PROMPT || DEFAULT_SYSTEM_PROMPT;
     systemPrompt = `${basePrompt}\n\nTone & length: ${VERBOSITY_INSTRUCTIONS[verbosity]}`;
-    maxToolRounds = parseInt(process.env.MAX_TOOL_ROUNDS || "5", 10);
-    maxHistoryTurns = parseInt(process.env.MAX_HISTORY_TURNS || "20", 10);
-  }
-
-  // Reset tool-support tracking whenever the configured model changes.
-  if (ollamaModel !== lastKnownModel) {
-    lastKnownModel = ollamaModel;
-    modelToolsUnsupported = false;
+    maxToolRounds   = parseInt(process.env.MAX_TOOL_ROUNDS    || "5",  10);
+    maxHistoryTurns = parseInt(process.env.MAX_HISTORY_TURNS  || "20", 10);
+    if (!googleApiKey) {
+      console.warn("[Agent] GOOGLE_AI_API_KEY is not set — requests will fail.");
+    }
   }
 }
 
+// ── Format conversion ─────────────────────────────────────────────────────────
+
 /**
- * Send a single chat request to Ollama and return the response message object.
+ * Convert the internal OpenAI-style message array to Gemini API format.
+ *
+ * Rules:
+ *  - The optional leading system message → system_instruction
+ *  - user  → { role: "user",  parts: [{ text }] }
+ *  - assistant (no tools) → { role: "model", parts: [{ text }] }
+ *  - assistant (tool_calls) → { role: "model", parts: [{ functionCall }…] }
+ *    followed by the immediately subsequent "tool" messages →
+ *    { role: "user", parts: [{ functionResponse }…] }
+ *
+ * @param {Array<object>} messages
+ * @returns {{ systemInstruction: string|null, contents: Array<object> }}
+ */
+function toGeminiContents(messages) {
+  let systemInstruction = null;
+  const contents        = [];
+  let   i               = 0;
+
+  if (messages[0]?.role === "system") {
+    systemInstruction = messages[0].content;
+    i = 1;
+  }
+
+  while (i < messages.length) {
+    const msg = messages[i];
+
+    if (msg.role === "user") {
+      contents.push({ role: "user", parts: [{ text: msg.content || "" }] });
+      i++;
+
+    } else if (msg.role === "assistant") {
+      if (msg.tool_calls?.length) {
+        // Emit functionCall parts for each tool the model requested
+        const callParts = msg.tool_calls.map((tc) => ({
+          functionCall: {
+            name: tc.function.name,
+            args: typeof tc.function.arguments === "string"
+              ? JSON.parse(tc.function.arguments)
+              : (tc.function.arguments || {}),
+          },
+        }));
+        contents.push({ role: "model", parts: callParts });
+
+        // Collect the immediately-following tool-result messages and bundle
+        // them into a single user turn with functionResponse parts.
+        i++;
+        const responseParts = [];
+        let   tcIdx         = 0;
+        while (i < messages.length && messages[i].role === "tool") {
+          const tcName = msg.tool_calls[tcIdx]?.function?.name || `tool_${tcIdx}`;
+          responseParts.push({
+            functionResponse: {
+              name:     tcName,
+              response: { output: messages[i].content },
+            },
+          });
+          tcIdx++;
+          i++;
+        }
+        if (responseParts.length > 0) {
+          contents.push({ role: "user", parts: responseParts });
+        }
+
+      } else {
+        contents.push({ role: "model", parts: [{ text: msg.content || "" }] });
+        i++;
+      }
+
+    } else {
+      i++; // skip unexpected roles (e.g. orphaned "tool" messages)
+    }
+  }
+
+  return { systemInstruction, contents };
+}
+
+/**
+ * Parse a Gemini API response into an OpenAI-style message object.
+ *
+ * @param {object} data  Parsed JSON from Google AI
+ * @returns {{ role: "assistant", content: string, tool_calls?: Array }}
+ */
+function parseGeminiResponse(data) {
+  const candidate = data.candidates?.[0];
+  if (!candidate) {
+    const blockReason = data.promptFeedback?.blockReason;
+    throw new Error(
+      blockReason
+        ? `Request blocked by Google AI: ${blockReason}`
+        : "No candidates in Google AI response"
+    );
+  }
+
+  const parts      = candidate.content?.parts || [];
+  let   content    = "";
+  const tool_calls = [];
+
+  for (const part of parts) {
+    if (part.text) {
+      content += part.text;
+    } else if (part.functionCall) {
+      tool_calls.push({
+        function: {
+          name:      part.functionCall.name,
+          arguments: part.functionCall.args || {},
+        },
+      });
+    }
+  }
+
+  return {
+    role: "assistant",
+    content,
+    ...(tool_calls.length > 0 ? { tool_calls } : {}),
+  };
+}
+
+/**
+ * Build the Gemini API request body shared by both streaming and non-streaming.
+ *
+ * @param {Array<object>} messages  OpenAI-style messages (system may be at index 0)
+ * @param {Array<object>} tools     Tool definitions from getToolDefinitions()
+ * @returns {object}
+ */
+function buildGeminiBody(messages, tools) {
+  const { systemInstruction, contents } = toGeminiContents(messages);
+
+  const functionDeclarations = tools
+    .filter((t) => t.type === "function")
+    .map((t) => ({
+      name:        t.function.name,
+      description: t.function.description,
+      parameters:  t.function.parameters,
+    }));
+
+  return {
+    contents,
+    ...(systemInstruction
+      ? { system_instruction: { parts: [{ text: systemInstruction }] } }
+      : {}),
+    ...(functionDeclarations.length > 0
+      ? { tools: [{ function_declarations: functionDeclarations }] }
+      : {}),
+  };
+}
+
+/**
+ * Send a single chat request to Google AI Studio and return the response.
+ *
  * @param {Array<object>} messages
  * @param {Array<object>} tools
- * @returns {Promise<object>} Ollama message object { role, content, tool_calls? }
+ * @returns {Promise<{ role: "assistant", content: string, tool_calls?: Array }>}
  */
-async function ollamaChat(messages, tools) {
-  const url = `${ollamaEndpoint}/api/chat`;
-
-  // If the model was already determined not to support tools, skip the tools field.
-  const body = {
-    model: ollamaModel,
-    messages,
-    ...(modelToolsUnsupported ? {} : { tools }),
-    stream: false,
-  };
+async function geminiChat(messages, tools) {
+  const url  = `https://generativelanguage.googleapis.com/v1beta/models/${googleModel}:generateContent`;
+  const body = buildGeminiBody(messages, tools);
 
   let res;
   try {
     res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      method:  "POST",
+      headers: {
+        "Content-Type":   "application/json",
+        "x-goog-api-key": googleApiKey,
+      },
+      body:    JSON.stringify(body),
     });
   } catch (err) {
-    throw new Error(
-      `Cannot reach Ollama at ${ollamaEndpoint}. Make sure Ollama is running. (${err.message})`
-    );
+    throw new Error(`Cannot reach Google AI Studio: ${err.message}`);
   }
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-
-    // Gracefully handle models that don't support the tools API:
-    // remember this for the session and retry without tools.
-    const isToolsUnsupported = (() => {
-      if (res.status !== 400) return false;
-      try {
-        const json = JSON.parse(text);
-        return typeof json.error === "string" && json.error.includes("does not support tools");
-      } catch {
-        return text.includes("does not support tools");
-      }
-    })();
-    if (isToolsUnsupported) {
-      console.warn(
-        `[Agent] Model "${ollamaModel}" does not support tools — falling back to plain chat.`
-      );
-      modelToolsUnsupported = true;
-      return ollamaChat(messages, []);
-    }
-
     let hint = "";
-    if (res.status === 404) {
-      hint = ` (Model "${ollamaModel}" may not be pulled — run: ollama pull ${ollamaModel})`;
-    } else if (res.status === 400) {
-      hint = ` (Bad request — check that the model name "${ollamaModel}" is correct)`;
-    } else if (res.status === 500) {
-      hint = " (Ollama internal error — check the Ollama server logs)";
+    if (res.status === 400) {
+      hint = " (Bad request — check your GOOGLE_AI_MODEL name)";
+    } else if (res.status === 403) {
+      hint = " (Forbidden — check that GOOGLE_AI_API_KEY is valid)";
+    } else if (res.status === 429) {
+      hint = " (Rate limited — too many requests to Google AI Studio)";
+    } else if (res.status === 500 || res.status === 503) {
+      hint = " (Google AI Studio server error — please try again)";
     }
-    throw new Error(`Ollama returned HTTP ${res.status}${hint}: ${text}`);
+    throw new Error(`Google AI Studio returned HTTP ${res.status}${hint}: ${text}`);
   }
 
   const data = await res.json();
-  return data.message; // { role: "assistant", content: "...", tool_calls?: [...] }
+  return parseGeminiResponse(data);
 }
+
+// ── History ───────────────────────────────────────────────────────────────────
 
 /**
  * Per-channel conversation history.
@@ -173,7 +290,7 @@ function pruneHistory(history, maxTurns) {
 }
 
 /**
- * Process a user message through the Ollama agent loop.
+ * Process a user message through the Google AI Studio agent loop.
  *
  * @param {string} channelId   - Unique identifier for the conversation channel.
  * @param {string} userMessage - The text the user sent.
@@ -201,7 +318,7 @@ export async function processMessage(channelId, userMessage, context = {}) {
 
   // Tool-call loop — up to MAX_TOOL_ROUNDS rounds of tool execution
   for (let round = 0; round < maxToolRounds; round++) {
-    const assistantMessage = await ollamaChat(messages, toolDefs);
+    const assistantMessage = await geminiChat(messages, toolDefs);
 
     // Append assistant's response to the running messages list
     messages.push(assistantMessage);
@@ -217,7 +334,6 @@ export async function processMessage(channelId, userMessage, context = {}) {
     }
 
     // Execute each tool call and append results
-    // Ollama returns tool_calls as: [{ function: { name, arguments: <object> } }]
     for (const toolCall of assistantMessage.tool_calls) {
       const { name, arguments: args } = toolCall.function;
       const argsDisplay =
@@ -230,7 +346,6 @@ export async function processMessage(channelId, userMessage, context = {}) {
       if (!tool) {
         result = `Error: tool "${name}" is not registered.`;
       } else {
-        // Ollama may pass arguments as an already-parsed object or as a JSON string
         let parsedArgs;
         if (typeof args === "string") {
           try {
@@ -253,7 +368,6 @@ export async function processMessage(channelId, userMessage, context = {}) {
 
       console.log(`[Agent] Tool result for ${name}: ${result}`);
 
-      // Ollama expects tool results in the "tool" role (no tool_call_id needed)
       messages.push({
         role: "tool",
         content: String(result),
@@ -275,69 +389,45 @@ export function clearHistory(channelId) {
   clearChannelNotes(channelId);
 }
 
-// ── streaming support ─────────────────────────────────────────────────────────
+// ── Streaming support ─────────────────────────────────────────────────────────
 
 /**
- * Async generator that streams NDJSON chunks from Ollama's chat API.
- * Each yielded value is a parsed Ollama chunk object: { message, done, ... }
+ * Async generator that streams SSE chunks from Google AI Studio.
+ * Each yielded value is a normalised chunk: { content?: string, tool_calls?: Array }
+ *
  * @param {Array<object>} messages
  * @param {Array<object>} tools
- * @yields {object} Parsed Ollama chunk — { message: { role, content, tool_calls? }, done: boolean }
+ * @yields {{ content: string, tool_calls?: Array }}
  */
-async function* ollamaChatStream(messages, tools) {
-  const url = `${ollamaEndpoint}/api/chat`;
-
-  const body = {
-    model: ollamaModel,
-    messages,
-    ...(modelToolsUnsupported ? {} : { tools }),
-    stream: true,
-  };
+async function* geminiChatStream(messages, tools) {
+  const url  = `https://generativelanguage.googleapis.com/v1beta/models/${googleModel}:streamGenerateContent?alt=sse`;
+  const body = buildGeminiBody(messages, tools);
 
   let res;
   try {
     res = await fetch(url, {
       method:  "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type":   "application/json",
+        "x-goog-api-key": googleApiKey,
+      },
       body:    JSON.stringify(body),
     });
   } catch (err) {
-    throw new Error(
-      `Cannot reach Ollama at ${ollamaEndpoint}. Make sure Ollama is running. (${err.message})`
-    );
+    throw new Error(`Cannot reach Google AI Studio: ${err.message}`);
   }
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-
-    // Gracefully handle models that don't support the tools API
-    const isToolsUnsupported = (() => {
-      if (res.status !== 400) return false;
-      try {
-        const json = JSON.parse(text);
-        return typeof json.error === "string" && json.error.includes("does not support tools");
-      } catch {
-        return text.includes("does not support tools");
-      }
-    })();
-    if (isToolsUnsupported) {
-      console.warn(
-        `[Agent] Model "${ollamaModel}" does not support tools — falling back to plain chat.`
-      );
-      modelToolsUnsupported = true;
-      yield* ollamaChatStream(messages, []);
-      return;
-    }
-
     let hint = "";
-    if (res.status === 404) {
-      hint = ` (Model "${ollamaModel}" may not be pulled — run: ollama pull ${ollamaModel})`;
-    } else if (res.status === 400) {
-      hint = ` (Bad request — check that the model name "${ollamaModel}" is correct)`;
-    } else if (res.status === 500) {
-      hint = " (Ollama internal error — check the Ollama server logs)";
+    if (res.status === 400) {
+      hint = " (Bad request — check your GOOGLE_AI_MODEL name)";
+    } else if (res.status === 403) {
+      hint = " (Forbidden — check that GOOGLE_AI_API_KEY is valid)";
+    } else if (res.status === 429) {
+      hint = " (Rate limited — too many requests to Google AI Studio)";
     }
-    throw new Error(`Ollama returned HTTP ${res.status}${hint}: ${text}`);
+    throw new Error(`Google AI Studio returned HTTP ${res.status}${hint}: ${text}`);
   }
 
   const reader  = res.body.getReader();
@@ -355,11 +445,47 @@ async function* ollamaChatStream(messages, tools) {
 
       for (const line of lines) {
         const trimmed = line.trim();
-        if (!trimmed) continue;
+        if (!trimmed || !trimmed.startsWith("data: ")) continue;
+        const jsonStr = trimmed.slice(6); // strip "data: " prefix
+        if (jsonStr === "[DONE]") return;
         try {
-          const chunk = JSON.parse(trimmed);
-          yield chunk;
-          if (chunk.done) return;
+          const chunk     = JSON.parse(jsonStr);
+          const candidate = chunk.candidates?.[0];
+          if (!candidate) continue;
+
+          const parts      = candidate.content?.parts || [];
+          let   text       = "";
+          const tool_calls = [];
+
+          for (const part of parts) {
+            if (part.text) {
+              text += part.text;
+            } else if (part.functionCall) {
+              tool_calls.push({
+                function: {
+                  name:      part.functionCall.name,
+                  arguments: part.functionCall.args || {},
+                },
+              });
+            }
+          }
+
+          yield {
+            content:    text,
+            tool_calls: tool_calls.length > 0 ? tool_calls : undefined,
+          };
+
+          // Stop streaming once the model signals it is done
+          if (
+            candidate.finishReason &&
+            candidate.finishReason !== "STOP" &&
+            candidate.finishReason !== "MAX_TOKENS"
+          ) {
+            console.warn(
+              `[Agent] Gemini stream ended with finishReason="${candidate.finishReason}"`
+            );
+            return;
+          }
         } catch {
           // ignore malformed lines
         }
@@ -371,8 +497,8 @@ async function* ollamaChatStream(messages, tools) {
 }
 
 /**
- * Process a user message through the Ollama agent loop, streaming response tokens
- * back to the caller via context callbacks.
+ * Process a user message through the Google AI Studio agent loop, streaming
+ * response tokens back to the caller via context callbacks.
  *
  * @param {string} channelId    - Unique identifier for the conversation channel.
  * @param {string} userMessage  - The text the user sent.
@@ -400,20 +526,17 @@ export async function processMessageStream(channelId, userMessage, context = {})
     let toolCalls   = null;
 
     // Stream this round's response
-    for await (const chunk of ollamaChatStream(messages, toolDefs)) {
-      const msg = chunk.message;
-      if (!msg) continue;
-
-      if (msg.content) {
-        fullContent += msg.content;
+    for await (const chunk of geminiChatStream(messages, toolDefs)) {
+      if (chunk.content) {
+        fullContent += chunk.content;
         // Only forward content chunks when no tool call is pending
         if (!toolCalls) {
-          context.onChunk?.(msg.content);
+          context.onChunk?.(chunk.content);
         }
       }
 
-      if (msg.tool_calls?.length) {
-        toolCalls = msg.tool_calls;
+      if (chunk.tool_calls?.length) {
+        toolCalls = chunk.tool_calls;
       }
     }
 

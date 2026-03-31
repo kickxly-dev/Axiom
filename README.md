@@ -1,6 +1,6 @@
 # Axiom
 
-**Axiom** is a local AI agent desktop app — and Discord bot — powered by a **local [Ollama](https://ollama.com)** server. No cloud API keys, no monthly bill, completely private.
+**Axiom** is an AI agent desktop app — and Discord bot — powered by **[Google AI Studio](https://aistudio.google.com)** (Gemini). It delivers streaming responses, a full tool set (code execution, web search, shell, weather, and more), and a clean minimal UI.
 
 The desktop GUI (`npm run app`) delivers a clean, minimal chat interface with streaming responses, multi-session history, and a growing tool set. The original terminal REPL and Discord bot modes are still fully supported.
 
@@ -15,7 +15,7 @@ The desktop GUI (`npm run app`) delivers a clean, minimal chat interface with st
 | 🎯 Terminal REPL | Polished interactive terminal chat — `npm run desktop` |
 | 🧠 AI Conversations | Full multi-turn conversation memory per channel/session |
 | ⚡ Streaming | Tokens stream in real-time as the model generates them |
-| 🔧 Agent Tool Loop | Ollama calls tools automatically (ReAct pattern) |
+| 🔧 Agent Tool Loop | Gemini calls tools automatically (ReAct pattern) |
 | 🔢 Calculator | Evaluate any math expression |
 | 🕐 Date & Time | Get the current date/time in any timezone |
 | ⏰ Reminders | "Remind me in 10 minutes to take a break" |
@@ -30,7 +30,6 @@ The desktop GUI (`npm run app`) delivers a clean, minimal chat interface with st
 | ▶️ Code Runner | Write and execute JavaScript or Python 3 code — run_code tool |
 | 🐚 Shell | Run shell commands locally with safety guardrails |
 | 📝 Notes | Agent scratchpad: save/read/list notes across tool rounds |
-| 🔒 100% Local | All inference runs on your own machine via Ollama |
 | ➕ Extensible | Add your own tools in minutes (see below) |
 
 ---
@@ -38,62 +37,25 @@ The desktop GUI (`npm run app`) delivers a clean, minimal chat interface with st
 ## 📋 Prerequisites
 
 - [Node.js](https://nodejs.org/) v18 or newer
-- [Ollama](https://ollama.com) installed and running
+- A free [Google AI Studio](https://aistudio.google.com) API key
 - *(Discord mode only)* A Discord account and a server where you can add bots
 
 ---
 
 ## 🚀 Setup Guide
 
-### Step 1 — Install Ollama
+### Step 1 — Get a Google AI Studio API key
 
-#### macOS
+1. Go to [https://aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
+2. Sign in with your Google account
+3. Click **"Create API key"** and copy the key
 
-```bash
-brew install ollama
-```
-
-Or download the macOS app from [https://ollama.com/download](https://ollama.com/download).
-
-#### Linux
-
-```bash
-curl -fsSL https://ollama.com/install.sh | sh
-```
-
-#### Windows
-
-Download the Windows installer from [https://ollama.com/download](https://ollama.com/download) and run it.
+> The free tier of Google AI Studio is generous enough for personal use.  
+> You can choose a more powerful model (e.g. `gemini-1.5-pro`) by setting `GOOGLE_AI_MODEL` in your `.env`.
 
 ---
 
-### Step 2 — Download the phi3:mini model
-
-```bash
-ollama pull phi3:mini
-```
-
-This downloads the ~2 GB quantised model once. Ollama caches it for future use.
-
-> **Want a different model?**  
-> You can use any Ollama model that supports tool calling (e.g. `phi3:medium`, `llama3`, `mistral`).  
-> Set `OLLAMA_MODEL=<name>` in your `.env` file.
-
----
-
-### Step 3 — Start the Ollama server
-
-In one terminal window run:
-
-```bash
-ollama serve
-```
-
-By default Ollama listens on `http://localhost:11434`. Keep this terminal open (or set Ollama to start automatically — the macOS/Windows apps do this for you).
-
----
-
-### Step 4 — Clone / Download Axiom
+### Step 2 — Clone / Download Axiom
 
 ```bash
 git clone https://github.com/kickxly-dev/Axiom.git
@@ -102,7 +64,7 @@ cd Axiom
 
 ---
 
-### Step 5 — Install Node.js dependencies
+### Step 3 — Install Node.js dependencies
 
 ```bash
 npm install
@@ -110,23 +72,23 @@ npm install
 
 ---
 
-### Step 6 — Configure environment variables
+### Step 4 — Configure environment variables
 
 ```bash
 cp .env.example .env
 ```
 
-Open `.env` and review the settings. The most important ones are:
+Open `.env` and set your API key:
 
 ```env
 # Choose "discord" or "desktop"
 MODE=discord
 
-# Ollama server URL (default is fine if you run Ollama locally)
-OLLAMA_ENDPOINT=http://localhost:11434
+# Your Google AI Studio API key
+GOOGLE_AI_API_KEY=your_google_ai_api_key_here
 
-# Model to use — must be pulled with: ollama pull <model>
-OLLAMA_MODEL=phi3:mini
+# Model to use (default is fine)
+GOOGLE_AI_MODEL=gemini-2.0-flash
 
 # Discord bot token (only needed for MODE=discord)
 DISCORD_TOKEN=your_discord_bot_token_here
@@ -134,7 +96,7 @@ DISCORD_TOKEN=your_discord_bot_token_here
 
 ---
 
-### Step 7 — (Discord mode only) Create a Discord Bot
+### Step 5 — (Discord mode only) Create a Discord Bot
 
 1. Go to the [Discord Developer Portal](https://discord.com/developers/applications)
 2. Click **"New Application"**, name it `Axiom`
@@ -154,7 +116,7 @@ DISCORD_TOKEN=your_discord_bot_token_here
 
 ---
 
-### Step 8 — Run Axiom
+### Step 6 — Run Axiom
 
 #### Desktop GUI (recommended)
 
@@ -241,7 +203,7 @@ Tools live in `src/tools/`. Adding a new one takes ~10 lines:
 ```js
 export const myTool = {
   name: "my_tool",
-  description: "What this tool does — Ollama reads this to decide when to call it.",
+  description: "What this tool does — Gemini reads this to decide when to call it.",
   parameters: {
     type: "object",
     properties: {
@@ -263,7 +225,7 @@ import { myTool } from "./myTool.js";
 export const tools = [...existingTools, myTool];
 ```
 
-That's it! Ollama will automatically discover and use the new tool based on the `description`.
+That's it! Gemini will automatically discover and use the new tool based on the `description`.
 
 ---
 
@@ -272,8 +234,8 @@ That's it! Ollama will automatically discover and use the new tool based on the 
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `MODE` | ❌ | `discord` | Run mode: `discord` or `desktop` |
-| `OLLAMA_ENDPOINT` | ❌ | `http://localhost:11434` | URL of your Ollama server |
-| `OLLAMA_MODEL` | ❌ | `phi3:mini` | Ollama model to use (must be pulled first) |
+| `GOOGLE_AI_API_KEY` | ✅ | — | Your Google AI Studio API key |
+| `GOOGLE_AI_MODEL` | ❌ | `gemini-2.0-flash` | Gemini model to use |
 | `DISCORD_TOKEN` | ✅ (discord) | — | Your Discord bot token |
 | `DISCORD_CLIENT_ID` | ❌ | — | Discord application ID (for slash commands) |
 | `SYSTEM_PROMPT` | ❌ | _built-in_ | AI personality / system instruction |
@@ -325,7 +287,7 @@ Axiom/
 │   ├── index.js          ← Entry point (mode selector)
 │   ├── bot.js            ← Discord bot (message handling)
 │   ├── desktop.js        ← Desktop terminal REPL
-│   ├── agent.js          ← Ollama AI agent loop
+│   ├── agent.js          ← Google AI Studio (Gemini) agent loop
 │   └── tools/
 │       ├── index.js      ← Tool registry
 │       ├── calculator.js ← Math evaluator
