@@ -1,8 +1,11 @@
 /**
  * agent.js
  *
- * Core AI agent loop powered by Google AI Studio (Gemini).
- *   1. Sends user messages to Google AI Studio.
+ * Core AI agent loop — primary provider is OpenRouter (OpenAI-compatible Chat
+ * Completions API). Falls back to Google AI Studio (Gemini) when
+ * OPENROUTER_API_KEY is not set.
+ *
+ *   1. Sends user messages to the configured LLM provider.
  *   2. Handles function-call responses by executing the matching tool.
  *   3. Feeds tool results back until a final text response is produced.
  */
@@ -11,25 +14,64 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getToolDefinitions, getToolByName } from "./tools/index.js";
 import { clearChannelNotes } from "./tools/notes.js";
 
-let googleApiKey    = null;
-let googleModel     = null;
-let systemPrompt    = null;
-let maxToolRounds   = null;
-let maxHistoryTurns = null;
-let verbosity       = null;
+// ── Shared config ─────────────────────────────────────────────────────────────
+
+let googleApiKey      = null;
+let googleModel       = null;
+let openrouterApiKey  = null;
+let openrouterModel   = null;
+let openrouterBaseUrl = null;
+let systemPrompt      = null;
+let maxToolRounds     = null;
+let maxHistoryTurns   = null;
+let verbosity         = null;
+
+// ── Persona / mode definitions ────────────────────────────────────────────────
+
+export const PERSONAS = {
+  concise: {
+    label: "Concise",
+    instruction:
+      "Be brief and direct — one or two sentences is ideal. " +
+      "Skip preamble, filler phrases ('Great question!', 'Certainly!', 'Of course!'), and unnecessary context. " +
+      "Only write more when the topic genuinely requires it.",
+  },
+  detailed: {
+    label: "Detailed",
+    instruction:
+      "Give complete, well-structured answers. " +
+      "Use bullet points or numbered steps for multi-part topics. " +
+      "Include relevant background and context when it adds real value.",
+  },
+  coder: {
+    label: "Coder",
+    instruction:
+      "You are in coder mode. Prioritise code over prose — always show working code examples. " +
+      "Use language-tagged fenced code blocks. Keep explanations tight and technical. " +
+      "Default to the most idiomatic approach for the language in use.",
+  },
+  coach: {
+    label: "Coach",
+    instruction:
+      "You are in coach mode. Be encouraging and educational. " +
+      "Explain the 'why' behind answers, break things into digestible steps, " +
+      "and offer tips for improvement or next steps. Treat every question as a teaching moment.",
+  },
+  roast: {
+    label: "Roast",
+    instruction:
+      "You are in roast mode. Be witty, sarcastic, and lightly irreverent — " +
+      "but still helpful and never cruel. Deliver the answer wrapped in a light roast of the question or situation. " +
+      "Keep it fun and punchy.",
+  },
+};
 
 /**
- * Read Google AI Studio config from environment (lazily, so dotenv is loaded first).
+ * Read provider config from environment (lazily, so dotenv is loaded first).
  */
 const VERBOSITY_INSTRUCTIONS = {
-  concise:
-    "Be brief and direct — one or two sentences is ideal. " +
-    "Skip preamble, filler phrases ('Great question!', 'Certainly!', 'Of course!'), and unnecessary context. " +
-    "Only write more when the topic genuinely requires it.",
-  detailed:
-    "Give complete, well-structured answers. " +
-    "Use bullet points or numbered steps for multi-part topics. " +
-    "Include relevant background and context when it adds real value.",
+  concise:   PERSONAS.concise.instruction,
+  detailed:  PERSONAS.detailed.instruction,
 };
 
 const DEFAULT_SYSTEM_PROMPT =
@@ -45,9 +87,12 @@ const DEFAULT_SYSTEM_PROMPT =
 
 function initConfig() {
   if (googleApiKey === null) {
-    googleApiKey = process.env.GOOGLE_AI_API_KEY || "";
-    googleModel  = process.env.GOOGLE_AI_MODEL   || "gemini-1.5-flash";
-    verbosity    = (process.env.RESPONSE_VERBOSITY || "concise").toLowerCase();
+    googleApiKey      = process.env.GOOGLE_AI_API_KEY    || "";
+    googleModel       = process.env.GOOGLE_AI_MODEL      || "gemini-2.0-flash";
+    openrouterApiKey  = process.env.OPENROUTER_API_KEY   || "";
+    openrouterModel   = process.env.OPENROUTER_MODEL     || "google/gemini-2.0-flash-exp:free";
+    openrouterBaseUrl = (process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/$/, "");
+    verbosity         = (process.env.RESPONSE_VERBOSITY  || "concise").toLowerCase();
     if (!VERBOSITY_INSTRUCTIONS[verbosity]) {
       console.warn(
         `[Agent] Unknown RESPONSE_VERBOSITY "${verbosity}" — falling back to "concise".`
@@ -55,11 +100,18 @@ function initConfig() {
       verbosity = "concise";
     }
     const basePrompt = process.env.SYSTEM_PROMPT || DEFAULT_SYSTEM_PROMPT;
-    systemPrompt = `${basePrompt}\n\nTone & length: ${VERBOSITY_INSTRUCTIONS[verbosity]}`;
-    maxToolRounds   = parseInt(process.env.MAX_TOOL_ROUNDS    || "5",  10);
-    maxHistoryTurns = parseInt(process.env.MAX_HISTORY_TURNS  || "20", 10);
-    if (!googleApiKey) {
-      console.warn("[Agent] GOOGLE_AI_API_KEY is not set — requests will fail.");
+    systemPrompt    = `${basePrompt}\n\nTone & length: ${VERBOSITY_INSTRUCTIONS[verbosity]}`;
+    maxToolRounds   = parseInt(process.env.MAX_TOOL_ROUNDS   || "5",  10);
+    maxHistoryTurns = parseInt(process.env.MAX_HISTORY_TURNS || "20", 10);
+
+    if (openrouterApiKey) {
+      console.log(`[Agent] Provider: OpenRouter (model: ${openrouterModel})`);
+    } else if (googleApiKey) {
+      console.log(`[Agent] Provider: Google AI Studio (model: ${googleModel})`);
+    } else {
+      console.warn(
+        "[Agent] Neither OPENROUTER_API_KEY nor GOOGLE_AI_API_KEY is set — requests will fail."
+      );
     }
   }
 }
@@ -265,7 +317,336 @@ async function geminiChat(messages, tools) {
   });
 }
 
-// ── History ───────────────────────────────────────────────────────────────────
+// ── OpenRouter (primary provider) ────────────────────────────────────────────
+
+/**
+ * Rethrow an OpenRouter HTTP error with a human-readable message.
+ *
+ * @param {number} status
+ * @param {object} data  Parsed JSON body (may be empty)
+ * @returns {never}
+ */
+function rethrowOpenRouterError(status, data) {
+  const msg = data?.error?.message || data?.message || "Unknown error";
+  if (status === 401) {
+    throw new Error(`OpenRouter HTTP 401 (Unauthorized — check your OPENROUTER_API_KEY): ${msg}`);
+  } else if (status === 403) {
+    throw new Error(`OpenRouter HTTP 403 (Forbidden — your key lacks access to this model): ${msg}`);
+  } else if (status === 404) {
+    throw new Error(`OpenRouter HTTP 404 (Model not found — check your OPENROUTER_MODEL name): ${msg}`);
+  } else if (status === 429) {
+    throw new Error(`OpenRouter HTTP 429 (Rate limited — too many requests): ${msg}`);
+  } else if (status >= 500) {
+    throw new Error(`OpenRouter HTTP ${status} (Server error — please try again): ${msg}`);
+  }
+  throw new Error(`OpenRouter error ${status}: ${msg}`);
+}
+
+/**
+ * Convert the internal OpenAI-style message array into a format suitable for
+ * the OpenRouter Chat Completions API.
+ *
+ * The internal history stores tool_calls without `id`/`type` and tool messages
+ * without `tool_call_id`.  This function assigns sequential IDs so OpenRouter
+ * can match each tool result back to the originating call.
+ *
+ * @param {Array<object>} messages
+ * @returns {Array<object>}
+ */
+function toOpenRouterMessages(messages) {
+  const out = [];
+  let callCounter = 0;
+
+  for (let i = 0; i < messages.length; ) {
+    const msg = messages[i];
+
+    if (msg.role === "system") {
+      out.push({ role: "system", content: msg.content || "" });
+      i++;
+    } else if (msg.role === "user") {
+      out.push({ role: "user", content: msg.content || "" });
+      i++;
+    } else if (msg.role === "assistant") {
+      if (msg.tool_calls?.length) {
+        // Assign sequential IDs to each tool call
+        const callsWithIds = msg.tool_calls.map((tc, idx) => ({
+          id:   `call_${callCounter + idx}`,
+          type: "function",
+          function: {
+            name:      tc.function.name,
+            arguments: typeof tc.function.arguments === "string"
+              ? tc.function.arguments
+              : JSON.stringify(tc.function.arguments || {}),
+          },
+        }));
+        out.push({ role: "assistant", content: msg.content || null, tool_calls: callsWithIds });
+        i++;
+
+        // Collect the immediately-following tool-result messages
+        let tcIdx = 0;
+        while (i < messages.length && messages[i].role === "tool") {
+          out.push({
+            role:         "tool",
+            tool_call_id: `call_${callCounter + tcIdx}`,
+            content:      messages[i].content || "",
+          });
+          tcIdx++;
+          i++;
+        }
+        callCounter += callsWithIds.length;
+      } else {
+        out.push({ role: "assistant", content: msg.content || "" });
+        i++;
+      }
+    } else {
+      i++; // skip orphaned roles
+    }
+  }
+
+  return out;
+}
+
+// ── Retry helper ──────────────────────────────────────────────────────────────
+
+const MAX_RETRIES     = parseInt(process.env.PROVIDER_MAX_RETRIES || "3", 10);
+const RETRY_BASE_MS   = parseInt(process.env.PROVIDER_RETRY_BASE_MS || "1000", 10);
+
+/**
+ * Returns true for transient HTTP errors that warrant a retry.
+ * @param {number} status
+ * @returns {boolean}
+ */
+function isRetryable(status) {
+  return status === 429 || status >= 500;
+}
+
+/**
+ * Exponential-backoff delay.
+ * @param {number} attempt  0-based attempt index
+ * @returns {Promise<void>}
+ */
+function backoff(attempt) {
+  const ms = RETRY_BASE_MS * 2 ** attempt + Math.random() * 200;
+  console.warn(`[Agent] Retrying in ${Math.round(ms)}ms (attempt ${attempt + 1}/${MAX_RETRIES})…`);
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Send a single chat request to OpenRouter and return the response.
+ * Retries automatically on 429 / 5xx up to MAX_RETRIES times.
+ *
+ * @param {Array<object>} messages  Internal OpenAI-style messages
+ * @param {Array<object>} tools     Tool definitions (OpenAI format)
+ * @returns {Promise<{ role: "assistant", content: string, tool_calls?: Array }>}
+ */
+async function openrouterChat(messages, tools) {
+  const body = {
+    model:    openrouterModel,
+    messages: toOpenRouterMessages(messages),
+    ...(tools.length > 0 ? { tools } : {}),
+  };
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    let res;
+    try {
+      res = await fetch(`${openrouterBaseUrl}/chat/completions`, {
+        method:  "POST",
+        headers: {
+          "Authorization": `Bearer ${openrouterApiKey}`,
+          "Content-Type":  "application/json",
+          "HTTP-Referer":  "https://github.com/kickxly-dev/Axiom",
+          "X-Title":       "Axiom",
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      if (attempt < MAX_RETRIES) { await backoff(attempt); continue; }
+      throw new Error(`Cannot reach OpenRouter: ${err.message}`);
+    }
+
+    let data;
+    try {
+      data = await res.json();
+    } catch {
+      throw new Error(`OpenRouter returned a non-JSON response (HTTP ${res.status})`);
+    }
+
+    if (!res.ok) {
+      if (isRetryable(res.status) && attempt < MAX_RETRIES) {
+        console.warn(`[Agent] OpenRouter HTTP ${res.status} — will retry.`);
+        await backoff(attempt);
+        continue;
+      }
+      rethrowOpenRouterError(res.status, data);
+    }
+
+    const choice = data.choices?.[0];
+    if (!choice) {
+      throw new Error("No choices in OpenRouter response");
+    }
+
+    const msg       = choice.message;
+    const content   = msg.content || "";
+    const toolCalls = (msg.tool_calls || []).map((tc) => ({
+      function: {
+        name:      tc.function.name,
+        arguments: tc.function.arguments || "{}",
+      },
+    }));
+
+    return {
+      role: "assistant",
+      content,
+      ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+    };
+  }
+
+  throw new Error("OpenRouter: exceeded maximum retry attempts");
+}
+
+/**
+ * Async generator that streams response chunks from OpenRouter via SSE.
+ * Each yielded value is a normalised chunk: { content?: string, tool_calls?: Array }
+ *
+ * Tool-call arguments are accumulated across chunks and emitted as a single
+ * tool_calls entry when the stream finishes or the finish_reason is "tool_calls".
+ *
+ * @param {Array<object>} messages  Internal OpenAI-style messages
+ * @param {Array<object>} tools     Tool definitions (OpenAI format)
+ * @yields {{ content: string, tool_calls?: Array }}
+ */
+async function* openrouterChatStream(messages, tools) {
+  const body = {
+    model:    openrouterModel,
+    messages: toOpenRouterMessages(messages),
+    ...(tools.length > 0 ? { tools } : {}),
+    stream: true,
+  };
+
+  let res;
+  try {
+    res = await fetch(`${openrouterBaseUrl}/chat/completions`, {
+      method:  "POST",
+      headers: {
+        "Authorization": `Bearer ${openrouterApiKey}`,
+        "Content-Type":  "application/json",
+        "HTTP-Referer":  "https://github.com/kickxly-dev/Axiom",
+        "X-Title":       "Axiom",
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    throw new Error(`Cannot reach OpenRouter: ${err.message}`);
+  }
+
+  if (!res.ok) {
+    let errData;
+    try { errData = await res.json(); } catch { errData = {}; }
+    rethrowOpenRouterError(res.status, errData);
+  }
+
+  const reader  = res.body.getReader();
+  const decoder = new TextDecoder();
+  let   buffer  = "";
+  // Accumulate tool-call argument strings keyed by their stream index
+  const pendingCalls = {};
+
+  outer: while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const payload = line.slice(6).trim();
+      if (payload === "[DONE]") {
+        const calls = Object.values(pendingCalls);
+        if (calls.length > 0) yield { content: "", tool_calls: calls };
+        return;
+      }
+
+      let event;
+      try { event = JSON.parse(payload); } catch { continue; }
+
+      const choice = event.choices?.[0];
+      if (!choice) continue;
+
+      const delta = choice.delta || {};
+
+      if (delta.content) {
+        yield { content: delta.content };
+      }
+
+      if (delta.tool_calls?.length) {
+        for (const tc of delta.tool_calls) {
+          const idx = tc.index ?? 0;
+          if (!pendingCalls[idx]) {
+            pendingCalls[idx] = { function: { name: "", arguments: "" } };
+          }
+          if (tc.function?.name)      pendingCalls[idx].function.name      += tc.function.name;
+          if (tc.function?.arguments) pendingCalls[idx].function.arguments += tc.function.arguments;
+        }
+      }
+
+      if (choice.finish_reason === "tool_calls") {
+        const calls = Object.values(pendingCalls);
+        if (calls.length > 0) yield { content: "", tool_calls: calls };
+        return;
+      }
+
+      if (
+        choice.finish_reason &&
+        choice.finish_reason !== "stop" &&
+        choice.finish_reason !== "tool_calls" &&
+        choice.finish_reason !== "length"
+      ) {
+        console.warn(`[Agent] OpenRouter stream ended with finish_reason="${choice.finish_reason}"`);
+        break outer;
+      }
+    }
+  }
+
+  // Flush any accumulated tool calls at EOF (no explicit [DONE] received)
+  const calls = Object.values(pendingCalls);
+  if (calls.length > 0) yield { content: "", tool_calls: calls };
+}
+
+// ── Provider selector ─────────────────────────────────────────────────────────
+
+/**
+ * Send a single chat request using the configured provider (OpenRouter when
+ * OPENROUTER_API_KEY is set, Google AI Studio otherwise).
+ *
+ * @param {Array<object>} messages
+ * @param {Array<object>} tools
+ * @returns {Promise<{ role: "assistant", content: string, tool_calls?: Array }>}
+ */
+async function llmChat(messages, tools) {
+  if (openrouterApiKey) {
+    return openrouterChat(messages, tools);
+  }
+  return geminiChat(messages, tools);
+}
+
+/**
+ * Async generator for streaming chat using the configured provider.
+ *
+ * @param {Array<object>} messages
+ * @param {Array<object>} tools
+ * @yields {{ content: string, tool_calls?: Array }}
+ */
+async function* llmChatStream(messages, tools) {
+  if (openrouterApiKey) {
+    yield* openrouterChatStream(messages, tools);
+    return;
+  }
+  yield* geminiChatStream(messages, tools);
+}
+
+
 
 /**
  * Per-channel conversation history.
@@ -299,11 +680,18 @@ function pruneHistory(history, maxTurns) {
 }
 
 /**
- * Process a user message through the Google AI Studio agent loop.
+ * Process a user message through the agent loop.
+ *
+ * Uses OpenRouter when OPENROUTER_API_KEY is set; falls back to Google AI
+ * Studio (Gemini) otherwise.
  *
  * @param {string} channelId   - Unique identifier for the conversation channel.
  * @param {string} userMessage - The text the user sent.
- * @param {object} [context]   - Optional context passed to tools (e.g. { sendCallback }).
+ * @param {object} [context]   - Optional context passed to tools and the agent:
+ *   - sendCallback  — reminder delivery callback (Discord)
+ *   - userId        — for persona + memory injection
+ *   - memoryContext — pre-built memory string to append to system prompt
+ *   - personaPrompt — additional persona instruction to append
  * @returns {Promise<string>}  - The final text response to send back to the user.
  */
 export async function processMessage(channelId, userMessage, context = {}) {
@@ -318,8 +706,17 @@ export async function processMessage(channelId, userMessage, context = {}) {
   // Append the new user message to history
   history.push({ role: "user", content: userMessage });
 
+  // Build effective system prompt with optional persona + memory context
+  let effectivePrompt = systemPrompt;
+  if (context.personaPrompt) {
+    effectivePrompt = `${effectivePrompt}\n\nPersona override: ${context.personaPrompt}`;
+  }
+  if (context.memoryContext) {
+    effectivePrompt = `${effectivePrompt}${context.memoryContext}`;
+  }
+
   const messages = [
-    { role: "system", content: systemPrompt },
+    { role: "system", content: effectivePrompt },
     ...history,
   ];
 
@@ -327,7 +724,7 @@ export async function processMessage(channelId, userMessage, context = {}) {
 
   // Tool-call loop — up to MAX_TOOL_ROUNDS rounds of tool execution
   for (let round = 0; round < maxToolRounds; round++) {
-    const assistantMessage = await geminiChat(messages, toolDefs);
+    const assistantMessage = await llmChat(messages, toolDefs);
 
     // Append assistant's response to the running messages list
     messages.push(assistantMessage);
@@ -347,13 +744,15 @@ export async function processMessage(channelId, userMessage, context = {}) {
       const { name, arguments: args } = toolCall.function;
       const argsDisplay =
         typeof args === "string" ? args : JSON.stringify(args);
-      console.log(`[Agent] Tool call: ${name}(${argsDisplay})`);
+      console.log(`[Tool] → ${name}  args=${argsDisplay}`);
 
       const tool = getToolByName(name);
       let result;
+      const t0 = Date.now();
 
       if (!tool) {
         result = `Error: tool "${name}" is not registered.`;
+        console.warn(`[Tool] ✗ ${name}  NOT FOUND  (${Date.now() - t0}ms)`);
       } else {
         let parsedArgs;
         if (typeof args === "string") {
@@ -361,6 +760,7 @@ export async function processMessage(channelId, userMessage, context = {}) {
             parsedArgs = JSON.parse(args);
           } catch (err) {
             result = `Error parsing arguments for tool "${name}": ${err.message}`;
+            console.warn(`[Tool] ✗ ${name}  ARG_PARSE_ERROR  ${err.message}`);
           }
         } else {
           parsedArgs = args;
@@ -369,13 +769,13 @@ export async function processMessage(channelId, userMessage, context = {}) {
         if (parsedArgs !== undefined) {
           try {
             result = await Promise.resolve(tool.execute(parsedArgs, { channelId, ...context }));
+            console.log(`[Tool] ✓ ${name}  (${Date.now() - t0}ms)  result=${String(result).slice(0, 120)}`);
           } catch (err) {
             result = `Error executing tool "${name}": ${err.message}`;
+            console.error(`[Tool] ✗ ${name}  EXEC_ERROR  ${err.message}  (${Date.now() - t0}ms)`);
           }
         }
       }
-
-      console.log(`[Agent] Tool result for ${name}: ${result}`);
 
       messages.push({
         role: "tool",
@@ -460,8 +860,11 @@ async function* geminiChatStream(messages, tools) {
 }
 
 /**
- * Process a user message through the Google AI Studio agent loop, streaming
- * response tokens back to the caller via context callbacks.
+ * Process a user message through the agent loop, streaming response tokens
+ * back to the caller via context callbacks.
+ *
+ * Uses OpenRouter when OPENROUTER_API_KEY is set; falls back to Google AI
+ * Studio (Gemini) otherwise.
  *
  * @param {string} channelId    - Unique identifier for the conversation channel.
  * @param {string} userMessage  - The text the user sent.
@@ -481,7 +884,16 @@ export async function processMessageStream(channelId, userMessage, context = {})
   const history = channelHistories.get(channelId);
   history.push({ role: "user", content: userMessage });
 
-  const messages  = [{ role: "system", content: systemPrompt }, ...history];
+  // Build effective system prompt with optional persona + memory context
+  let effectivePrompt = systemPrompt;
+  if (context.personaPrompt) {
+    effectivePrompt = `${effectivePrompt}\n\nPersona override: ${context.personaPrompt}`;
+  }
+  if (context.memoryContext) {
+    effectivePrompt = `${effectivePrompt}${context.memoryContext}`;
+  }
+
+  const messages  = [{ role: "system", content: effectivePrompt }, ...history];
   const toolDefs  = getToolDefinitions();
 
   for (let round = 0; round < maxToolRounds; round++) {
@@ -489,7 +901,7 @@ export async function processMessageStream(channelId, userMessage, context = {})
     let toolCalls   = null;
 
     // Stream this round's response
-    for await (const chunk of geminiChatStream(messages, toolDefs)) {
+    for await (const chunk of llmChatStream(messages, toolDefs)) {
       if (chunk.content) {
         fullContent += chunk.content;
         // Only forward content chunks when no tool call is pending
@@ -520,15 +932,17 @@ export async function processMessageStream(channelId, userMessage, context = {})
     for (const toolCall of toolCalls) {
       const { name, arguments: args } = toolCall.function;
       const argsDisplay = typeof args === "string" ? args : JSON.stringify(args);
-      console.log(`[Agent] Tool call: ${name}(${argsDisplay})`);
+      console.log(`[Tool] → ${name}  args=${argsDisplay}`);
 
       context.onToolCall?.(name, args);
 
       const tool = getToolByName(name);
       let result;
+      const t0 = Date.now();
 
       if (!tool) {
         result = `Error: tool "${name}" is not registered.`;
+        console.warn(`[Tool] ✗ ${name}  NOT FOUND  (${Date.now() - t0}ms)`);
       } else {
         let parsedArgs;
         if (typeof args === "string") {
@@ -536,6 +950,7 @@ export async function processMessageStream(channelId, userMessage, context = {})
             parsedArgs = JSON.parse(args);
           } catch (err) {
             result = `Error parsing arguments for tool "${name}": ${err.message}`;
+            console.warn(`[Tool] ✗ ${name}  ARG_PARSE_ERROR  ${err.message}`);
           }
         } else {
           parsedArgs = args;
@@ -544,13 +959,14 @@ export async function processMessageStream(channelId, userMessage, context = {})
         if (parsedArgs !== undefined) {
           try {
             result = await Promise.resolve(tool.execute(parsedArgs, { channelId, ...context }));
+            console.log(`[Tool] ✓ ${name}  (${Date.now() - t0}ms)  result=${String(result).slice(0, 120)}`);
           } catch (err) {
             result = `Error executing tool "${name}": ${err.message}`;
+            console.error(`[Tool] ✗ ${name}  EXEC_ERROR  ${err.message}  (${Date.now() - t0}ms)`);
           }
         }
       }
 
-      console.log(`[Agent] Tool result for ${name}: ${result}`);
       context.onToolResult?.(name, result);
 
       messages.push({ role: "tool", content: String(result) });

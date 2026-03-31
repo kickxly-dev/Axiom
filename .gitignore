@@ -4,3 +4,7 @@ npm-debug.log*
 .DS_Store
 dist/
 screenshot-preview.png
+*.db
+*.db-shm
+*.db-wal
+.axiom/
