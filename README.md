@@ -1,8 +1,10 @@
 # Axiom
 
-**Axiom** is an AI agent desktop app — and Discord bot — powered by **[Google AI Studio](https://aistudio.google.com)** (Gemini). It delivers streaming responses, a full tool set (code execution, web search, shell, weather, and more), and a clean minimal UI.
+**Axiom** is an AI agent desktop app — and Discord bot — that works with **[OpenRouter](https://openrouter.ai)** (primary, recommended) or **[Google AI Studio](https://aistudio.google.com)** (fallback). It delivers streaming responses, a full tool set (code execution, web search, shell, weather, and more), and a clean minimal UI.
 
 The desktop GUI (`npm run app`) delivers a clean, minimal chat interface with streaming responses, multi-session history, and a growing tool set. The original terminal REPL and Discord bot modes are still fully supported.
+
+> **Migrating from Google AI Studio?** See the [migration notes](#migrating-from-google-ai-studio) below.
 
 ---
 
@@ -37,23 +39,24 @@ The desktop GUI (`npm run app`) delivers a clean, minimal chat interface with st
 ## 📋 Prerequisites
 
 - [Node.js](https://nodejs.org/) v18 or newer
-- A free [Google AI Studio](https://aistudio.google.com) API key
+- An **[OpenRouter](https://openrouter.ai/keys)** API key *(recommended — free tier available, no billing required)*
+- *OR* a **[Google AI Studio](https://aistudio.google.com)** API key *(fallback)*
 - *(Discord mode only)* A Discord account and a server where you can add bots
 
 ---
 
 ## 🚀 Setup Guide
 
-### Step 1 — Get a Google AI Studio API key
+### Step 1 — Get an OpenRouter API key (recommended)
 
-1. Go to [https://aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
-2. Sign in with your Google account
-3. Click **"Create API key"** and copy the key
+1. Go to [https://openrouter.ai/keys](https://openrouter.ai/keys)
+2. Sign in (GitHub or Google) and click **"Create key"**
+3. Copy the key
 
-> The free tier of Google AI Studio is generous enough for personal use.  
-> You can choose a more powerful model (e.g. `gemini-1.5-pro`) by setting `GOOGLE_AI_MODEL` in your `.env`.
+OpenRouter provides a free credit allowance and access to dozens of models — including Google Gemini, GPT-4o, Claude, and more — without requiring Google billing.
 
-> **Note:** Axiom uses the official `@google/generative-ai` SDK (not the legacy v1beta REST endpoint) so `gemini-1.5-flash` and newer models work out of the box. If you previously cloned the repo and got a `404 models/gemini-1.5-flash is not found for API version v1beta` error, run `git pull` followed by `npm install` to pick up the SDK and the fix.
+> **Using Google AI Studio instead?**  
+> If you prefer to use Google AI Studio directly, set `GOOGLE_AI_API_KEY` in `.env` and leave `OPENROUTER_API_KEY` empty. Axiom will automatically fall back to Gemini. See the [fallback configuration](#google-ai-studio-fallback) section below.
 
 ---
 
@@ -82,15 +85,29 @@ Open the `.env` file in the project root and fill in your values:
 # Choose "discord" or "desktop"
 MODE=discord
 
-# Your Google AI Studio API key
-GOOGLE_AI_API_KEY=your_google_ai_api_key_here
+# --- Primary provider: OpenRouter (recommended) ---
+OPENROUTER_API_KEY=your_openrouter_api_key_here
+OPENROUTER_MODEL=google/gemini-2.0-flash-exp:free
 
-# Model to use (default is fine)
-GOOGLE_AI_MODEL=gemini-1.5-flash
+# --- Fallback provider: Google AI Studio (only used if OPENROUTER_API_KEY is not set) ---
+# GOOGLE_AI_API_KEY=your_google_ai_api_key_here
+# GOOGLE_AI_MODEL=gemini-2.0-flash
 
 # Discord bot token (only needed for MODE=discord)
 DISCORD_TOKEN=your_discord_bot_token_here
 ```
+
+**Choosing an OpenRouter model:**
+
+| Model slug | Notes |
+|---|---|
+| `google/gemini-2.0-flash-exp:free` | Free tier — fast, good quality (default) |
+| `meta-llama/llama-3.1-8b-instruct:free` | Free tier — lightweight |
+| `google/gemini-2.5-pro` | Paid — Google's most capable model |
+| `openai/gpt-4o` | Paid — OpenAI flagship |
+| `anthropic/claude-3.5-sonnet` | Paid — Anthropic flagship |
+
+Browse the full list at [openrouter.ai/models](https://openrouter.ai/models). Filter by **"Free"** to find no-cost options.
 
 ---
 
@@ -229,11 +246,21 @@ That's it! Gemini will automatically discover and use the new tool based on the 
 
 ## 🌿 Environment Variables Reference
 
+### Provider settings
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `OPENROUTER_API_KEY` | ✅ *(recommended)* | — | OpenRouter API key — takes priority when set |
+| `OPENROUTER_MODEL` | ❌ | `google/gemini-2.0-flash-exp:free` | Model slug (see [openrouter.ai/models](https://openrouter.ai/models)) |
+| `OPENROUTER_BASE_URL` | ❌ | `https://openrouter.ai/api/v1` | Override OpenRouter endpoint |
+| `GOOGLE_AI_API_KEY` | ✅ *(if no OR key)* | — | Google AI Studio key — used as fallback |
+| `GOOGLE_AI_MODEL` | ❌ | `gemini-2.0-flash` | Gemini model when falling back to Google |
+
+### General settings
+
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `MODE` | ❌ | `discord` | Run mode: `discord` or `desktop` |
-| `GOOGLE_AI_API_KEY` | ✅ | — | Your Google AI Studio API key |
-| `GOOGLE_AI_MODEL` | ❌ | `gemini-1.5-flash` | Gemini model to use |
 | `DISCORD_TOKEN` | ✅ (discord) | — | Your Discord bot token |
 | `DISCORD_CLIENT_ID` | ❌ | — | Discord application ID (for slash commands) |
 | `SYSTEM_PROMPT` | ❌ | _built-in_ | AI personality / system instruction |
@@ -243,6 +270,35 @@ That's it! Gemini will automatically discover and use the new tool based on the 
 | `OWNER_ID` | ❌ | — | Discord user ID that always has access |
 | `ALLOWED_USER_IDS` | ❌ | — | Comma-separated user IDs allowed to use the bot |
 | `ALLOWED_GUILD_IDS` | ❌ | — | Comma-separated server IDs where the bot responds |
+
+---
+
+## 🔁 Google AI Studio fallback
+
+If you prefer to use Google AI Studio directly (or as a backup), leave `OPENROUTER_API_KEY` blank and set:
+
+```env
+GOOGLE_AI_API_KEY=your_google_ai_api_key_here
+GOOGLE_AI_MODEL=gemini-2.0-flash
+```
+
+Axiom automatically selects the Google AI Studio provider when no OpenRouter key is configured.
+
+---
+
+## 📦 Migrating from Google AI Studio
+
+If you were using an earlier version of Axiom that required `GOOGLE_AI_API_KEY`:
+
+1. Get a free key at [openrouter.ai/keys](https://openrouter.ai/keys)
+2. Add to `.env`:
+   ```env
+   OPENROUTER_API_KEY=your_key_here
+   OPENROUTER_MODEL=google/gemini-2.0-flash-exp:free
+   ```
+3. You can leave your `GOOGLE_AI_API_KEY` in place — it becomes the fallback and is ignored when `OPENROUTER_API_KEY` is set.
+
+No code changes are needed. The bot, desktop GUI, and terminal REPL all work identically with either provider.
 
 ---
 
@@ -323,7 +379,7 @@ Axiom/
 │   ├── index.js          ← Entry point (mode selector)
 │   ├── bot.js            ← Discord bot (message handling)
 │   ├── desktop.js        ← Desktop terminal REPL
-│   ├── agent.js          ← Google AI Studio (Gemini) agent loop
+│   ├── agent.js          ← AI agent loop (OpenRouter primary / Gemini fallback)
 │   └── tools/
 │       ├── index.js      ← Tool registry
 │       ├── calculator.js ← Math evaluator
@@ -334,6 +390,7 @@ Axiom/
 │       ├── coinflip.js   ← Coin flip / dice roll / random pick
 │       └── unitconvert.js← Unit conversion
 ├── .env                  ← Your environment variables (edit this)
+├── .env.example          ← Example / template for .env
 ├── .gitignore
 ├── package.json
 └── README.md
