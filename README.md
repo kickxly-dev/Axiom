@@ -241,6 +241,43 @@ That's it! Gemini will automatically discover and use the new tool based on the 
 | `SYSTEM_PROMPT` | ❌ | _built-in_ | AI personality / system instruction |
 | `RESPONSE_VERBOSITY` | ❌ | `concise` | Reply length: `concise` or `detailed` |
 | `MAX_TOOL_ROUNDS` | ❌ | `5` | Max tool-call iterations per message |
+| `OWNER_ID` | ❌ | — | Discord user ID that always has access |
+| `ALLOWED_USER_IDS` | ❌ | — | Comma-separated user IDs allowed to use the bot |
+| `ALLOWED_GUILD_IDS` | ❌ | — | Comma-separated server IDs where the bot responds |
+
+---
+
+## 🔒 Privacy & Access Control
+
+By default Axiom responds to anyone in any server it is invited to. You can lock it down using three optional environment variables:
+
+| Variable | What it controls |
+|---|---|
+| `OWNER_ID` | Your Discord user ID — always has access, bypasses all other checks |
+| `ALLOWED_USER_IDS` | Comma-separated list of user IDs permitted to use the bot |
+| `ALLOWED_GUILD_IDS` | Comma-separated list of server (guild) IDs where the bot will respond |
+
+**How the rules work:**
+
+1. If `OWNER_ID` is set and matches the message author → always allowed.
+2. If `ALLOWED_GUILD_IDS` is set → guild messages from unlisted servers are silently ignored. DMs are not affected by this setting (use `ALLOWED_USER_IDS` to restrict DMs).
+3. If `ALLOWED_USER_IDS` is set → only those users can trigger the bot (in any allowed server, plus DMs).
+4. Leave any variable empty (or omit it) to skip that restriction.
+
+**Example — personal-use only:**
+
+```env
+# Your own Discord user ID (always has access)
+OWNER_ID=123456789012345678
+
+# Friends you want to share it with (different IDs from the owner)
+ALLOWED_USER_IDS=111111111111111111,222222222222222222
+
+# Only your private server
+ALLOWED_GUILD_IDS=333333333333333333
+```
+
+> **Tip:** Enable **Developer Mode** in Discord (*Settings → Advanced → Developer Mode*), then right-click any user or server to copy its ID.
 
 ---
 
