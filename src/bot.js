@@ -3,6 +3,16 @@
  *
  * Sets up the Discord client and handles incoming messages.
  * Routes each message through the AI agent and replies with the result.
+ *
+ * Special commands (prefix: !  or "axiom <cmd>"):
+ *   clear       — reset conversation history
+ *   tooltest    — directly test a tool: !tooltest calculator {"expression":"2+2"}
+ *   persona     — set/show persona: !persona coder
+ *   remember    — store a memory: !remember key=value
+ *   plan        — structured plan: !plan <task>
+ *   debug       — debug analysis: !debug <problem>
+ *   ship        — ship checklist: !ship <project>
+ *   build       — build guide: !build <thing>
  */
 
 import {
@@ -12,7 +22,15 @@ import {
   ActivityType,
   MessageFlags,
 } from "discord.js";
-import { processMessage, clearHistory } from "./agent.js";
+import { processMessage, clearHistory, PERSONAS } from "./agent.js";
+import {
+  getProfile,
+  setPersona,
+  setMemory,
+  getMemories,
+  buildMemoryContext,
+} from "./db/memory.js";
+import { getToolByName, getToolDefinitions } from "./tools/index.js";
 
 /**
  * Parse a comma-separated env var into a Set of trimmed, non-empty strings.
@@ -87,9 +105,10 @@ client.on("messageCreate", async (message) => {
   const isDM = !message.guild;
   const isMentioned =
     message.mentions.has(client.user) ||
-    message.content.toLowerCase().startsWith("axiom");
+    message.content.toLowerCase().startsWith("axiom") ||
+    message.content.startsWith("!");
 
-  // In guilds: only respond when mentioned or when message starts with "axiom"
+  // In guilds: only respond when mentioned or when message starts with "axiom"/"!"
   // In DMs: always respond
   if (!isDM && !isMentioned) return;
 
@@ -104,10 +123,102 @@ client.on("messageCreate", async (message) => {
     userInput = userInput.slice(5).trim();
   }
 
-  // Handle the !clear / "axiom clear" command
-  if (userInput.toLowerCase() === "clear") {
+  const userId = message.author.id;
+
+  // ── Built-in commands ────────────────────────────────────────────────────────
+
+  // !clear / clear
+  if (/^!?clear$/i.test(userInput)) {
     clearHistory(message.channelId);
     return message.reply("🧹 Conversation history cleared!");
+  }
+
+  // !tooltest [name] [json-params]
+  const toolTestMatch = userInput.match(/^!?tooltest(?:\s+(\S+)(?:\s+([\s\S]*))?)?$/i);
+  if (toolTestMatch) {
+    const toolName  = toolTestMatch[1];
+    const rawParams = toolTestMatch[2];
+    if (!toolName) {
+      const list = getToolDefinitions().map((t) => `\`${t.function.name}\``).join(", ");
+      return message.reply(`🔧 Available tools: ${list}`);
+    }
+    const tool = getToolByName(toolName);
+    if (!tool) return message.reply(`❌ Tool \`${toolName}\` not found.`);
+    let params = {};
+    if (rawParams) {
+      try { params = JSON.parse(rawParams); }
+      catch { return message.reply("❌ Invalid JSON params."); }
+    }
+    try {
+      await message.channel.sendTyping();
+      const t0     = Date.now();
+      const result = await Promise.resolve(tool.execute(params, { channelId: message.channelId }));
+      const elapsed = Date.now() - t0;
+      console.log(`[Tool] ✓ ${toolName}  via Discord !tooltest  (${elapsed}ms)`);
+      const out = `🔧 **${toolName}** (${elapsed}ms):\n\`\`\`\n${String(result).slice(0, 1800)}\n\`\`\``;
+      return message.reply(out.length <= 2000 ? out : out.slice(0, 2000));
+    } catch (err) {
+      console.error(`[Tool] ✗ ${toolName}  EXEC_ERROR  ${err.message}`);
+      return message.reply(`❌ Tool error: ${err.message}`);
+    }
+  }
+
+  // !persona [name]
+  const personaMatch = userInput.match(/^!?persona(?:\s+(\S+))?$/i);
+  if (personaMatch) {
+    const name = personaMatch[1];
+    if (!name) {
+      const profile = getProfile(userId);
+      const list    = Object.keys(PERSONAS).map((k) =>
+        k === profile.persona ? `**${k}** ✓` : k
+      ).join(", ");
+      return message.reply(`🎭 Current persona: **${profile.persona}** — Options: ${list}`);
+    }
+    if (!PERSONAS[name]) {
+      return message.reply(`❌ Unknown persona. Options: ${Object.keys(PERSONAS).join(", ")}`);
+    }
+    setPersona(userId, name);
+    return message.reply(`🎭 Persona set to **${name}** — ${PERSONAS[name].label}`);
+  }
+
+  // !remember key=value
+  const rememberMatch = userInput.match(/^!?remember\s+(.+)$/i);
+  if (rememberMatch) {
+    const entry = rememberMatch[1].trim();
+    const sep   = entry.indexOf("=");
+    if (sep === -1) return message.reply("❌ Use format: `!remember key=value`");
+    const key   = entry.slice(0, sep).trim();
+    const value = entry.slice(sep + 1).trim();
+    setMemory(userId, key, value);
+    return message.reply(`🧠 Remembered: **${key}** = ${value}`);
+  }
+
+  // !plan <task>
+  const planMatch = userInput.match(/^!?plan\s+([\s\S]+)$/i);
+  if (planMatch) {
+    const task = planMatch[1];
+    userInput = `Create a detailed, numbered step-by-step plan for the following task: ${task}`;
+  }
+
+  // !debug <problem>
+  const debugMatch = userInput.match(/^!?debug\s+([\s\S]+)$/i);
+  if (debugMatch) {
+    const problem = debugMatch[1];
+    userInput = `Analyse the following problem and provide root cause analysis and actionable fixes: ${problem}`;
+  }
+
+  // !ship <project>
+  const shipMatch = userInput.match(/^!?ship\s+([\s\S]+)$/i);
+  if (shipMatch) {
+    const project = shipMatch[1];
+    userInput = `List everything required to ship the following project or feature — including code, tests, docs, deployment, and any blockers: ${project}`;
+  }
+
+  // !build <thing>
+  const buildMatch = userInput.match(/^!?build\s+([\s\S]+)$/i);
+  if (buildMatch) {
+    const thing = buildMatch[1];
+    userInput = `Provide a step-by-step guide to build: ${thing}`;
   }
 
   if (!userInput) {
@@ -124,8 +235,15 @@ client.on("messageCreate", async (message) => {
   }
 
   try {
-    // Build the context (sendCallback lets the remind tool DM the user)
+    // Build the context with persona + memory
+    const profile       = getProfile(userId);
+    const persona       = PERSONAS[profile.persona] || PERSONAS.concise;
+    const memCtx        = buildMemoryContext(userId);
+
     const context = {
+      userId,
+      personaPrompt: persona.instruction,
+      memoryContext:  memCtx,
       sendCallback: async (reminderText) => {
         try {
           await message.reply(reminderText);
