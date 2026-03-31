@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Axiom — Web Client</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0f1117;
+      --surface:   #1a1d27;
+      --border:    #2a2d3a;
+      --accent:    #6c7cfc;
+      --accent-dk: #4a5cd0;
+      --text:      #e2e5f0;
+      --text-dim:  #8b8fa8;
+      --user-bg:   #1e2236;
+      --bot-bg:    #14172090;
+      --error:     #ff6b6b;
+      --green:     #4fd69c;
+      --font:      -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --mono:      "JetBrains Mono", "Fira Code", "Courier New", monospace;
+      --radius:    10px;
+    }
+
+    body {
+      font-family:      var(--font);
+      background-color: var(--bg);
+      color:            var(--text);
+      height:           100dvh;
+      display:          flex;
+      flex-direction:   column;
+    }
+
+    /* ── Header ── */
+    header {
+      display:         flex;
+      align-items:     center;
+      justify-content: space-between;
+      padding:         12px 20px;
+      border-bottom:   1px solid var(--border);
+      background:      var(--surface);
+      flex-shrink:     0;
+    }
+    header .logo {
+      font-size:   1.2rem;
+      font-weight: 700;
+      color:       var(--accent);
+      letter-spacing: 1px;
+    }
+    header .controls {
+      display: flex;
+      gap:     10px;
+      align-items: center;
+    }
+    header select, header input {
+      background:  var(--bg);
+      border:      1px solid var(--border);
+      color:       var(--text);
+      padding:     5px 10px;
+      border-radius: 6px;
+      font-size:   0.85rem;
+      outline:     none;
+    }
+    header select:focus, header input:focus { border-color: var(--accent); }
+
+    /* ── Messages ── */
+    #messages {
+      flex:       1;
+      overflow-y: auto;
+      padding:    20px;
+      display:    flex;
+      flex-direction: column;
+      gap:        14px;
+      scroll-behavior: smooth;
+    }
+
+    .msg {
+      display:       flex;
+      flex-direction: column;
+      max-width:     78%;
+      gap:           4px;
+    }
+    .msg.user  { align-self: flex-end;  align-items: flex-end; }
+    .msg.axiom { align-self: flex-start; align-items: flex-start; }
+
+    .bubble {
+      padding:        10px 15px;
+      border-radius:  var(--radius);
+      font-size:      0.95rem;
+      line-height:    1.6;
+      white-space:    pre-wrap;
+      word-break:     break-word;
+    }
+    .msg.user  .bubble { background: var(--user-bg); border: 1px solid var(--border); }
+    .msg.axiom .bubble { background: var(--bot-bg);  border: 1px solid var(--border); }
+    .msg.axiom .bubble.thinking { color: var(--text-dim); font-style: italic; }
+    .msg.axiom .bubble.error    { color: var(--error);    border-color: var(--error); }
+
+    .label {
+      font-size:   0.72rem;
+      color:       var(--text-dim);
+      padding:     0 4px;
+    }
+    .msg.user  .label { color: var(--accent); }
+
+    /* code blocks */
+    pre { background: #0a0c10; border-radius: 6px; padding: 12px; overflow-x: auto; margin-top: 6px; }
+    code { font-family: var(--mono); font-size: 0.85rem; }
+    p + p { margin-top: 6px; }
+
+    /* ── Input bar ── */
+    #input-bar {
+      display:      flex;
+      gap:          10px;
+      padding:      14px 20px;
+      border-top:   1px solid var(--border);
+      background:   var(--surface);
+      flex-shrink:  0;
+    }
+    #user-input {
+      flex:         1;
+      background:   var(--bg);
+      border:       1px solid var(--border);
+      border-radius: var(--radius);
+      color:        var(--text);
+      font-family:  var(--font);
+      font-size:    0.95rem;
+      padding:      10px 14px;
+      resize:       none;
+      outline:      none;
+      min-height:   44px;
+      max-height:   160px;
+      line-height:  1.5;
+    }
+    #user-input:focus { border-color: var(--accent); }
+    #send-btn {
+      background:    var(--accent);
+      border:        none;
+      border-radius: var(--radius);
+      color:         #fff;
+      font-size:     1.1rem;
+      padding:       0 18px;
+      cursor:        pointer;
+      transition:    background 0.15s;
+      flex-shrink:   0;
+    }
+    #send-btn:hover   { background: var(--accent-dk); }
+    #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* ── Status bar ── */
+    #status {
+      font-size:   0.75rem;
+      color:       var(--text-dim);
+      padding:     4px 20px;
+      background:  var(--bg);
+      border-top:  1px solid var(--border);
+      flex-shrink: 0;
+    }
+    #status.ok    { color: var(--green); }
+    #status.error { color: var(--error); }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar             { width: 6px; }
+    ::-webkit-scrollbar-track       { background: transparent; }
+    ::-webkit-scrollbar-thumb       { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #3a3d50; }
+  </style>
+</head>
+<body>
+
+<header>
+  <span class="logo">⚡ Axiom</span>
+  <div class="controls">
+    <input id="user-id-input" type="text" placeholder="User ID (optional)" title="Optional user ID for memory + persona" value="" />
+    <select id="persona-select" title="Select persona">
+      <option value="concise">Concise</option>
+      <option value="detailed">Detailed</option>
+      <option value="coder">Coder</option>
+      <option value="coach">Coach</option>
+      <option value="roast">Roast</option>
+    </select>
+  </div>
+</header>
+
+<div id="messages">
+  <div class="msg axiom">
+    <span class="label">Axiom</span>
+    <div class="bubble">👋 Hi! I'm <strong>Axiom</strong> — your AI agent. Ask me anything or give me a task.</div>
+  </div>
+</div>
+
+<div id="input-bar">
+  <textarea id="user-input" rows="1" placeholder="Message Axiom… (Enter to send, Shift+Enter for newline)"></textarea>
+  <button id="send-btn" title="Send">➤</button>
+</div>
+
+<div id="status">Connecting to API…</div>
+
+<script type="module" src="client.js"></script>
+</body>
+</html>
