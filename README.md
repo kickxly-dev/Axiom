@@ -74,11 +74,7 @@ npm install
 
 ### Step 4 — Configure environment variables
 
-```bash
-cp .env.example .env
-```
-
-Open `.env` and set your API key:
+Open the `.env` file in the project root and fill in your values:
 
 ```env
 # Choose "discord" or "desktop"
@@ -241,6 +237,7 @@ That's it! Gemini will automatically discover and use the new tool based on the 
 | `SYSTEM_PROMPT` | ❌ | _built-in_ | AI personality / system instruction |
 | `RESPONSE_VERBOSITY` | ❌ | `concise` | Reply length: `concise` or `detailed` |
 | `MAX_TOOL_ROUNDS` | ❌ | `5` | Max tool-call iterations per message |
+| `MAX_HISTORY_TURNS` | ❌ | `20` | Max conversation turns kept in memory per session |
 | `OWNER_ID` | ❌ | — | Discord user ID that always has access |
 | `ALLOWED_USER_IDS` | ❌ | — | Comma-separated user IDs allowed to use the bot |
 | `ALLOWED_GUILD_IDS` | ❌ | — | Comma-separated server IDs where the bot responds |
@@ -334,7 +331,7 @@ Axiom/
 │       ├── joke.js       ← Random joke fetcher
 │       ├── coinflip.js   ← Coin flip / dice roll / random pick
 │       └── unitconvert.js← Unit conversion
-├── .env.example          ← Template for your .env file
+├── .env                  ← Your environment variables (edit this)
 ├── .gitignore
 ├── package.json
 └── README.md
