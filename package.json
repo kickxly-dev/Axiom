@@ -1,13 +1,15 @@
 {
   "name": "axiom-ai-agent",
-  "version": "1.0.0",
-  "description": "Axiom - An AI brain Discord bot and desktop app powered by a local Ollama server (phi3:mini) with an extensible tool system",
-  "main": "src/index.js",
+  "version": "2.0.0",
+  "description": "Axiom — a pro AI agent desktop app powered by local Ollama with streaming, tools, and a clean minimal UI",
+  "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "desktop": "MODE=desktop node src/index.js"
+    "desktop": "MODE=desktop node src/index.js",
+    "app": "electron .",
+    "app:dev": "NODE_ENV=development electron ."
   },
   "keywords": [
     "discord",
@@ -25,5 +27,8 @@
   },
   "overrides": {
     "undici": "^6.24.1"
+  },
+  "devDependencies": {
+    "electron": "^41.1.0"
   }
 }
