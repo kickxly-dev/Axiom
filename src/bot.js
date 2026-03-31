@@ -14,6 +14,47 @@ import {
 } from "discord.js";
 import { processMessage, clearHistory } from "./agent.js";
 
+/**
+ * Parse a comma-separated env var into a Set of trimmed, non-empty strings.
+ * @param {string|undefined} value
+ * @returns {Set<string>}
+ */
+function parseIdList(value) {
+  if (!value) return new Set();
+  return new Set(value.split(",").map((s) => s.trim()).filter(Boolean));
+}
+
+/**
+ * Returns true if the message author is allowed to use the bot.
+ * Rules (all optional — leave env vars blank to disable each restriction):
+ *   1. OWNER_ID always passes.
+ *   2. ALLOWED_GUILD_IDS: if set, guild messages must come from a listed server.
+ *   3. ALLOWED_USER_IDS: if set, the author must be in the list.
+ * @param {import("discord.js").Message} message
+ * @returns {boolean}
+ */
+function isAuthorized(message) {
+  const ownerId = (process.env.OWNER_ID || "").trim();
+  const allowedUsers = parseIdList(process.env.ALLOWED_USER_IDS);
+  const allowedGuilds = parseIdList(process.env.ALLOWED_GUILD_IDS);
+
+  // Owner always passes
+  if (ownerId && message.author.id === ownerId) return true;
+
+  // Guild restriction — only applies to guild messages, not DMs
+  // (To restrict DMs, use ALLOWED_USER_IDS)
+  if (allowedGuilds.size > 0 && message.guild) {
+    if (!allowedGuilds.has(message.guild.id)) return false;
+  }
+
+  // User restriction (applies to both guild and DM messages)
+  if (allowedUsers.size > 0) {
+    return allowedUsers.has(message.author.id);
+  }
+
+  return true;
+}
+
 // Discord client with the intents we need
 export const client = new Client({
   intents: [
@@ -39,6 +80,9 @@ client.once("ready", (c) => {
 client.on("messageCreate", async (message) => {
   // Ignore messages from bots (including self)
   if (message.author.bot) return;
+
+  // Access control — silently ignore unauthorized users/servers
+  if (!isAuthorized(message)) return;
 
   const isDM = !message.guild;
   const isMentioned =
